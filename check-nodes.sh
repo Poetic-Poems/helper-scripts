@@ -13,14 +13,20 @@ IFS=$'\''\t'\'' read -r pr short <<<"$out"
 printf '\''%-10s#%s  %s\n'\'' image: "${pr:-none}" "$short"
 '
 
+ago() {
+  perl -pe 's~((?:\d\d[-T:Z]?){7})~
+    $1." (".sprintf("%3d",(`date +%s` - `date -d"$1" +%s`)/60)." minutes ago)"
+  ~ge'
+}
+
 # local nodes
 for d in ~/poetic-node-{1,2}; do
-  D="$d" bash -s <<<"$cmd"
+  D="$d" bash -s <<<"$cmd" | ago
 done
 
 # remote nodes
 for d in /opt/poetic-node{,-2}; do
-  ssh -i ~/.ssh/id_rsa root@5.78.159.79 "D='$d' bash -s" <<<"$cmd"
+  ssh -i ~/.ssh/id_rsa root@5.78.159.79 "D='$d' bash -s" <<<"$cmd" | ago
 done
 
 echo -e "\n---"
