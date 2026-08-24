@@ -50,9 +50,9 @@ for node in "${nodes[@]}"; do
       }
       END {exit(rv)}
     ') &&
-    printf '(%5d) ' $(<<<"$value" wc -c) &&
+    printf '(%5d) ' $(printf '%s' "$value" | wc -c) &&
     if [[ "${key,,}" =~ (key|token|secret) ]]; then
-      printf '%s%.0s' $(<<<"$value" md5sum)
+      printf '%s%.0s' $(printf '%s' "$value" | md5sum)
     else
       echo -n "$value"
     fi
