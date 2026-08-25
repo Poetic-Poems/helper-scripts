@@ -120,7 +120,8 @@ unquote() {
 show() {  # show KEY VALUE
   local key=$1 value=$2
   printf '(%5d) ' "$(printf '%s' "$value" | wc -c)"
-  if [[ "${key,,}" =~ (key|token|secret) ]]; then
+  if [[ "${key,,}" =~ (key|token|secret) ]] &&
+     [[ ! "${key,,}" =~ _path$ ]]; then
     printf '%s' "$(printf '%s' "$value" | md5sum | cut -d' ' -f1)"
   else
     printf '%s' "$value"
@@ -138,7 +139,7 @@ for node in "${nodes[@]}"; do
   fi
 
   for key in "$@"; do
-    printf '%-22s %-34s ' "$node" "$key"
+    printf '%-20s %-36s ' "$node" "$key"
     env_value=$(awk -F'\t' -v k="$key" '
       BEGIN {rv=1}
       $1 == ".env" && match($2, "^\\s*(\\w+)=(|.*\\S)", m) {
