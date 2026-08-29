@@ -34,7 +34,7 @@ set -uo pipefail
 
 USER=$(whoami)
 LOG_RETENTION_DAYS=7
-AGE_HOURS="${AGE_HOURS:-5}"
+AGE_HOURS="${AGE_HOURS:-12}"
 mins=$(( 60 * AGE_HOURS ))
 DRY=${DRYRUN:-0}    # DRYRUN can be set in the environment.
 case "${1:-}" in -n|--wet-run) DRY=0 ;; esac
@@ -95,6 +95,7 @@ is_protected() {
   case "$(basename "$1")" in
     .X11-unix|.ICE-unix|.font-unix|.XIM-unix|.Test-unix) return 0 ;;
     systemd-*|snap*|tailscaled*|docker*|containerd*)     return 0 ;;
+    tmux-1000)                                           return 0 ;;
   esac
   [[ -S "$1" ]]
 }
