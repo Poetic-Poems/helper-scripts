@@ -20,16 +20,16 @@ printf '%-10s#%s  %s\n' image: "${pr:-none}" "$short"
 HERE
 )
 
-ago() { perl -p <(awk '/^#!.*\/perl\>/{p=1;next} p{print}' "$0"); }
+format() { perl -p <(awk '/^#!.*\/perl\>/{p=1;next} p{print}' "$0"); }
 
 # local nodes
 for d in ~/poetic-node-{1,2}; do
-  D="$d" bash -s <<<"$cmd" | ago
+  D="$d" bash -s <<<"$cmd" | format
 done
 
 # remote nodes
 for d in /opt/poetic-node{,-2}; do
-  ssh -i ~/.ssh/id_rsa root@5.78.159.79 "D='$d' bash -s" <<<"$cmd" | ago
+  ssh -i ~/.ssh/id_rsa root@5.78.159.79 "D='$d' bash -s" <<<"$cmd" | format
 done
 
 echo -e "\n---"
@@ -49,5 +49,5 @@ BEGIN {
     sprintf("%s (%3d minutes %sgo)", $timestamp, $diff/60, $sign)
   }
 }
-s/((?:\d\d[-T:Z]?){7})/ago/ge
-
+s/((?:\d\d[-T:Z]?){7})/ago/ge;
+s/^(  \S+)( \S+)/sprintf '%-35s%-5s',$1,$2/e;
