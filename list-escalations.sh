@@ -5,7 +5,7 @@
     -type d                   \
     -name .git                \
     -exec bash -c '
-      cd "$(basename "$(dirname "$1")")"
+      cd "$(dirname "$1")"
       echo -e "\n\"$(pwd)\":"
       gh issue list -s open --json labels,title,url --jq '\''
         map(
