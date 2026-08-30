@@ -26,14 +26,13 @@ exit
 
 #!/bin/bash
 
-disp() { printf '%-12s%s\n' "$1:" "$2"; }
+disp() { printf '%-16s%s\n' "$1:" "$2"; }
 echo
 cd "$D"
 disp host "$(hostname)"
 disp node-dir "$D"
 disp node-name "$(awk -F= '/^NODE_NAME=/{print $2}' .env)"
-docker compose exec -T scheduler /app/agent-cycle.sh --status </dev/null |
-sed 's/:/:  /'
+docker compose exec -T scheduler /app/agent-cycle.sh --status </dev/null
 item="$(docker compose exec -T scheduler jq -sr '
     ([.[] | select(.event=="cycle-start")] | last) as $s
     | if $s == null then "idle" else
@@ -72,4 +71,5 @@ BEGIN {
   }
 }
 s/((?:\d\d[-T:Z]?){7})/ago/ge;
+s/^(\S*?:\s*)(?=\S)/$1." "x(16-length$1)/e;
 s/^(  \S+)( \S+)/sprintf '%-35s%-5s',$1,$2/e;
