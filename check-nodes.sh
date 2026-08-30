@@ -2,7 +2,30 @@
 
 date +'%n%Y-%m-%dT%H:%M:%S%z'
 
-cmd=$(cat <<'HERE'
+extract() { awk 'p&&/^###/{exit} /^## '$1' /{p=1;next} p{print}' "$0"; }
+cmd=$(extract COMMANDS)
+fmt=$(extract FORMAT)
+format() { perl -pe "$fmt"; }
+
+# local nodes
+for d in ~/poetic-node-{1,2}; do
+  D="$d" bash -s <<<"$cmd" | format
+done
+
+# remote nodes
+for d in /opt/poetic-node{,-2}; do
+  ssh -i ~/.ssh/id_rsa root@5.78.159.79 "D='$d' bash -s" <<<"$cmd" | format
+done
+
+echo -e "\n---"
+exit
+
+
+################################################################################
+## COMMANDS ####################################################################
+
+#!/bin/bash
+
 echo
 printf '%-10s%s\n' host: "$(hostname)"
 printf '%-10s%s\n' node-dir: "$D"
@@ -28,25 +51,10 @@ out="$(
 )"
 IFS=$'\t' read -r pr short <<<"$out"
 printf '%-10s#%s  %s\n' image: "${pr:-none}" "$short"
-HERE
-)
 
-format() { perl -p <(awk '/^#!.*\/perl\>/{p=1;next} p{print}' "$0"); }
-
-# local nodes
-for d in ~/poetic-node-{1,2}; do
-  D="$d" bash -s <<<"$cmd" | format
-done
-
-# remote nodes
-for d in /opt/poetic-node{,-2}; do
-  ssh -i ~/.ssh/id_rsa root@5.78.159.79 "D='$d' bash -s" <<<"$cmd" | format
-done
-
-echo -e "\n---"
-exit
 
 ################################################################################
+## FORMAT ######################################################################
 
 #!/usr/bin/perl -p
 
