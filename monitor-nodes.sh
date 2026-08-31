@@ -21,11 +21,11 @@ CMD='
     BLU=$'\''\033[1;34m'\''
     OFF=$'\''\e[m'\''
     ~/Code/Poetic-Poems/helper-scripts/check-nodes.sh |
-    sed -E -es"/\<(ENABLED|ok)\>/$GRN&$OFF/" \
-           -es"/\<RUNNING\>/$RED&$OFF/"      \
-           -es"/\<idle\>/$BLU&$OFF/"
+    sed -uE -es"/\<(ENABLED|ok)\>/$GRN&$OFF/"  \
+            -es"/\<RUNNING\>/$RED&$OFF/"       \
+            -es"/\<idle\>/$BLU&$OFF/"
   '
-SLEEP=234
+PERIOD=300
 
 # --- Sanity checks ----------------------------------------------------------
 
@@ -53,28 +53,27 @@ right_pane=$(tmux split-window -h -t "$left_pane" -P -F '#{pane_id}')
 
 # --- Start the processes ------------------------------------------------------
 
-# Right pane: dummy producer, piped through tee into the named pipe.
-KEYS="while true; do
-  rows=\$((\$(tmux display-message -p '#{pane_height}') - 1))
-  ($CMD) |
-  tee >(perl -ne 'push@l,\$_; @l>'\$rows' and print shift@l' >'$PIPE')
-  sleep $SLEEP
-done
+# Right pane: producer, piped through tee and perl into the named pipe.
+rows='$(($(tmux display-message -p "#{pane_height}") - 1))'
+tmux send-keys -t "$right_pane" "
+while true; do
+  $CMD
+  sleep \$(($PERIOD - \$(date +%s)%$PERIOD))
+done |
+tee >(
+  perl -ne 'BEGIN{$|=1} push@l,\$_; @l>'$rows' and print shift@l' >'$PIPE'
+)
 "
-echo $KEYS
-tmux send-keys -t "$right_pane" "$KEYS"
-#tmux send-keys -t "$right_pane" "$CMD | tee >(perl -ne 'push@l,\$_; @l>10 and print shift@l' >'${PIPE}')" Enter
 
 # Left pane: consumer.
 #
-# NB: `tail -F "$PIPE"` (the obvious choice) does not work reliably against
-# a FIFO. tail decides whether a file has grown by checking its size, and a
-# FIFO always reports a size of 0, so tail never notices new data while the
-# writer stays open; it only flushes what it has buffered once the writer
-# closes. Against a producer that never closes (like CMD above), the
-# left pane would sit empty forever. If you want literal `tail -F` anyway
-# (e.g. your real writer does periodically close and reopen the pipe),
-# swap in this line instead:
+# NB: `tail -F "$PIPE"` (the obvious choice) does not work reliably against a
+# FIFO.  tail decides whether a file has grown by checking its size, and a FIFO
+# always reports a size of 0, so tail never notices new data while the writer
+# stays open; it only flushes what it has buffered once the writer closes.
+# Against a producer that never closes, the left pane would sit empty forever.
+# If you want literal `tail -F` anyway (e.g. your real writer does periodically
+# close and reopen the pipe), swap in this line instead:
 #
 #   tmux send-keys -t "$left_pane" "tail -F '${PIPE}'" Enter
 #
@@ -82,7 +81,11 @@ tmux send-keys -t "$right_pane" "$KEYS"
 # That keeps a permanent reader on the pipe at all times, so `cat` sees
 # new data the instant it is written, and the producer is protected from
 # being killed by SIGPIPE if this pane's reader is ever restarted.
-tmux send-keys -t "$left_pane" "exec 3<>'${PIPE}'; cat <&3" Enter
+tmux send-keys -t "$left_pane" "
+yes '' | head -$rows
+exec 3<>'${PIPE}'
+cat <&3
+"
 
 # Leave the user focused on the left (consumer) pane.
 tmux select-pane -t "$left_pane"
