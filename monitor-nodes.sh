@@ -61,7 +61,14 @@ while true; do
   sleep \$(($PERIOD - \$(date +%s)%$PERIOD))
 done |
 tee >(
-  perl -ne 'BEGIN{$|=1} push@l,\$_; @l>'$rows' and print shift@l' >'$PIPE'
+  perl -ne '
+    BEGIN{
+      $| = 1;
+    }
+    push @l, \$_;
+    \$rows = qx'\\''echo $rows'\\'';
+    print shift @l while @l > \$rows;
+  ' >'$PIPE'
 )
 "
 
