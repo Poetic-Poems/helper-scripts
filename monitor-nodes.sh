@@ -26,6 +26,7 @@ CMD='
             -es"/\<idle\>/$BLU&$OFF/"
   '
 PERIOD=300
+PHASE=240
 
 # --- Sanity checks ----------------------------------------------------------
 
@@ -58,7 +59,7 @@ rows='$(($(tmux display-message -p "#{pane_height}") - 1))'
 tmux send-keys -t "$right_pane" "
 while true; do
   $CMD
-  sleep \$(($PERIOD - \$(date +%s)%$PERIOD))
+  sleep \$(($PERIOD - (\$(date +%s) - $PHASE)%$PERIOD))
 done |
 tee >(
   perl -ne '
