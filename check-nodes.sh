@@ -1,5 +1,6 @@
 #!/bin/bash
 
+printf '\n%72s\n' | tr \  =
 date +'%n%Y-%m-%dT%H:%M:%S%z'
 
 extract() { awk 'p&&/^###/{exit} /^## '$1' /{p=1;next} p{print}' "$0"; }
@@ -17,7 +18,6 @@ for d in /opt/poetic-node{,-2}; do
   ssh -i ~/.ssh/id_rsa root@5.78.159.79 "D='$d' bash -s" <<<"$cmd" | format
 done
 
-echo -e "\n---"
 exit
 
 
@@ -27,7 +27,7 @@ exit
 #!/bin/bash
 
 disp() { printf '%-16s%s\n' "$1:" "$2"; }
-echo
+echo -e "\n---\n"
 cd "$D"
 disp host "$(hostname)"
 disp node-dir "$D"
