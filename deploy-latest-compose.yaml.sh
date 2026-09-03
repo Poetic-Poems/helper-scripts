@@ -1,0 +1,1 @@
+/home/wallen/Code/Poetic-Poems/helper-scripts/gh-get.sh Poetic-Poems/agent-ops deploy/docker/compose.yaml | tee ~/poetic-node-?/compose.yaml | ssh root@5.78.159.79 'tee /opt/poetic-node{,-2}/compose.yaml >/dev/null'
