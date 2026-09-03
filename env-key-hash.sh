@@ -16,32 +16,36 @@
 # sidecar that died on a stale credential is exactly the case worth seeing.
 #
 # Options
-#   --node <node>     Specify which node to query.  If omitted,
+#   --env-only        Show only what is staged in .env, skipping the
+#                     container lookup.  Faster, and needs no docker.
+#   -h, --help        Display this help then exit.
+#   -n, --node NODEE  Specify which node to query.  If omitted,
 #                     all nodes are queried.  Available nodes are:
 #                     - ockham-container
 #                     - ockham-2
 #                     - poetic-1
 #                     - poetic-2
-#   --env-only        Show only what is staged in .env, skipping the
-#                     container lookup.  Faster, and needs no docker.
-
-if [ "$1" == "--help" ]; then
-  awk 'NR<3{next} /^\s*$/{exit} match($0,/# ?(.*)/,m){print m[1]}' "$0"
-  exit
-fi
 
 nodes=( ockham-container ockham-2 poetic-1 poetic-2 )
 env_only=0
 
-while [[ "$1" == --* ]]; do
+while [[ "$1" == -* ]]; do
   case "$1" in
-    --node)
-      shift
-      nodes=($(printf '%s\n' "${nodes[@]}" | grep -Fx -- "$1"))
-      shift
-      ;;
     --env-only)
       env_only=1
+      shift
+      ;;
+    -h|--help)
+      awk 'NR<3{next} /^\s*$/{exit} match($0,/# ?(.*)/,m){print m[1]}' "$0"
+      echo -e "\nAvailable keys are:"
+      "$(dirname "$0")"/gh-get.sh \
+        Poetic-Poems/agent-ops deploy/docker/.env.example |
+        awk -F= '/^[A-Z]/{print "    " $1}' | sort -u
+      exit 0
+      ;;
+    -n|--node)
+      shift
+      nodes=($(printf '%s\n' "${nodes[@]}" | grep -Fx -- "$1"))
       shift
       ;;
     *)
