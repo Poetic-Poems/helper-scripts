@@ -12,6 +12,15 @@
 # that was edited but never delivered by `docker compose up -d` shows here as
 # a container line marked STALE.  No "is it set?" check catches that: the
 # file is right, the container is wrong, and the two are never compared.
+#
+# A second, unrelated cause produces an identical mismatch: compose.yaml
+# wires values as `${VAR:-}` with no `env_file:`, so `.env` is read only for
+# interpolation, and a variable exported in the shell that ran
+# `docker compose up -d` wins over the file.  This case is marked ENV
+# OVERRIDE instead of STALE: a container newer than `.env` and still holding
+# a mismatched value means the environment overrode the file, not that the
+# container is outdated.
+#
 # Stopped containers are included and marked with their state, because a
 # sidecar that died on a stale credential is exactly the case worth seeing.
 #
@@ -95,14 +104,22 @@ declare -A NODE_PROJECT=(
 # One round trip per node, wherever the node is: emit the .env verbatim and
 # every container's environment, each line tagged with where it came from —
 # ".env", or the service name (plus its state, when it is not running).
+# Also emit each side's timestamp — the .env file's mtime and each
+# container's Created time — as pseudo env vars, so a mismatch can be
+# classified as STALE or ENV OVERRIDE without a second round trip.
 collect='
   sed "s|^|.env\t|" "$ENVFILE" 2>/dev/null
+  mtime=$(stat -c %Y "$ENVFILE" 2>/dev/null)
+  [ -n "$mtime" ] && printf ".env\tENV_MTIME=%s\n" "$mtime"
   [ -n "$PROJECT" ] || exit 0
   for c in $(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" 2>/dev/null); do
     svc=$(docker inspect -f "{{index .Config.Labels \"com.docker.compose.service\"}}" "$c" 2>/dev/null)
     [ -n "$svc" ] || continue
     state=$(docker inspect -f "{{.State.Status}}" "$c" 2>/dev/null)
     [ "$state" = running ] || svc="$svc[$state]"
+    created=$(docker inspect -f "{{.Created}}" "$c" 2>/dev/null)
+    created_epoch=$(date -d "$created" +%s 2>/dev/null)
+    [ -n "$created_epoch" ] && printf "%s\tCREATED=%s\n" "$svc" "$created_epoch"
     docker inspect -f "{{range .Config.Env}}{{println .}}{{end}}" "$c" 2>/dev/null |
       sed "s|^|$svc\t|"
   done
@@ -141,6 +158,12 @@ for node in "${nodes[@]}"; do
   else
     data=$(ENVFILE="${NODE_ENV[$node]}" PROJECT="$project" bash -s <<<"$collect")
   fi
+
+  env_mtime=$(awk -F'\t' '$1 == ".env" && match($2, "^ENV_MTIME=(.*)$", m) {print m[1]; exit}' <<<"$data")
+  declare -A created_epoch=()
+  while IFS=$'\t' read -r svc epoch; do
+    created_epoch[$svc]=$epoch
+  done < <(awk -F'\t' 'match($2, "^CREATED=(.*)$", m) {print $1 "\t" m[1]}' <<<"$data")
 
   for key in "$@"; do
     printf '%-20s %-36s ' "$node" "$key"
@@ -184,7 +207,17 @@ for node in "${nodes[@]}"; do
         if (( ! env_found )); then
           printf '  NOT IN .env'
         elif [[ "$val" != "$env_value" ]]; then
-          printf '  STALE'
+          label=STALE
+          if [[ -n "$env_mtime" ]]; then
+            for svc in ${holders[$val]//,/ }; do
+              c=${created_epoch[$svc]:-}
+              if [[ -n "$c" && "$c" -gt "$env_mtime" ]]; then
+                label="ENV OVERRIDE"
+                break
+              fi
+            done
+          fi
+          printf '  %s' "$label"
         fi
         echo
       done
