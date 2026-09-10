@@ -1,23 +1,18 @@
 #!/usr/bin/bash
 
-(
-  echo -n '{'
-  find ~/Code/{Poetic-Poems,Pullwright}                     \
-    -maxdepth 2                                             \
-    -type d                                                 \
-    -name .git                                              \
-    -exec bash -c '
-      cd "$(dirname "$1")"
-      echo -e "\n\"$(pwd)\":"
-      gh issue list -s open --json labels,title,url --jq '\''
-        map(
-          .labels = (.labels | map(.name))                  |
-          select(.labels | any(. == "enabler-escalation"))  |
-          .labels = (.labels | join(", "))
-        )
-      '\''
-      echo -n ","
-    ' _ {} \;
-)                                                           |
-sed -z 's/,$/}/'                                            |
-jq "$1"
+< <(
+  find ~/Code/{Poetic-Poems,Pullwright} \
+    -maxdepth 1 -type d -exec [ -d {}/.git ] \; -print0
+) readarray -d '' repo_dirs
+for repo_dir in "${repo_dirs[@]}"; do
+  owner=$(basename "$(dirname "$repo_dir")")
+  repo=$owner/$(basename "$repo_dir")
+  gh issue list -R"$repo" -sopen --json id,title,labels -q 'map(
+    .labels = (.labels | map(.name)) |
+    select(.labels | any(test("enabler-escalation|pw::pager"))) |
+    .labels = (.labels | join(", ")) |
+    .repo = "'"$repo"'"
+  )'
+done |
+jq -s add
+
