@@ -1,9 +1,11 @@
+#!/usr/bin/bash
+
 (
-  echo -n "{"
-  find ~/Code/Poetic-Poems    \
-    -maxdepth 2               \
-    -type d                   \
-    -name .git                \
+  echo -n '{'
+  find ~/Code/{Poetic-Poems,Pullwright}                     \
+    -maxdepth 2                                             \
+    -type d                                                 \
+    -name .git                                              \
     -exec bash -c '
       cd "$(dirname "$1")"
       echo -e "\n\"$(pwd)\":"
@@ -16,6 +18,6 @@
       '\''
       echo -n ","
     ' _ {} \;
-)                             |
-sed -z 's/,$/}/'              |
-jq
+)                                                           |
+sed -z 's/,$/}/'                                            |
+jq "$1"
