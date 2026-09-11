@@ -1,12 +1,20 @@
 #!/usr/bin/bash
 
-# env-key-hash.sh [options] KEY [KEY ..]
+# env-key-hash.sh [options] KEY-PATTERN [KEY-PATTERN ..]
 #
 # For one or more agent-ops node .env keys, display what is *staged* in the
 # node's .env file and, beneath it, what each of the node's *containers* is
 # actually using.  Each value is shown as its (trimmed) length followed by
 # the value itself or, if the key names a sensitive value, its md5 hash.
 # If no length is displayed, the key wasn't found on that side.
+#
+# Each KEY-PATTERN is an extended regular expression (grep -E syntax),
+# matched unanchored against every key name a node's .env or containers
+# actually define.  A literal name like GITHUB_TOKEN is itself a valid
+# pattern and matches only itself unless it is also a substring of another
+# key; anchor it (^GITHUB_TOKEN$) to be sure.  A pattern matching nothing on
+# a given node prints one "(no matching keys)" line for that node instead
+# of the usual rows.
 #
 # A container keeps the .env values it held when it was created, so a value
 # that was edited but never delivered by `docker compose up -d` shows here as
@@ -46,7 +54,7 @@ while [[ "$1" == -* ]]; do
       ;;
     -h|--help)
       awk 'NR<3{next} /^\s*$/{exit} match($0,/# ?(.*)/,m){print m[1]}' "$0"
-      echo -e "\nAvailable keys are:"
+      echo -e "\nAvailable keys are (a KEY-PATTERN may also match any of these by regex):"
       "$(dirname "$0")"/gh-get.sh \
         Poetic-Poems/agent-ops deploy/docker/.env.example |
         awk -F= '/^[A-Z]/{print "    " $1}' | sort -u
@@ -70,9 +78,10 @@ if (( ${#nodes[@]} == 0 )); then
 fi
 
 for key in "$@"; do
-  if [[ "$key" =~ [^0-9A-Za-z_] ]]; then
-    echo "Invalid key: $key" >&2
-    exit -1
+  grep -E -q -- "$key" </dev/null
+  if (( $? == 2 )); then
+    echo "Invalid key pattern: $key" >&2
+    exit 2
   fi
 done
 
@@ -165,63 +174,80 @@ for node in "${nodes[@]}"; do
     created_epoch[$svc]=$epoch
   done < <(awk -F'\t' 'match($2, "^CREATED=(.*)$", m) {print $1 "\t" m[1]}' <<<"$data")
 
-  for key in "$@"; do
-    printf '%-20s %-36s ' "$node" "$key"
-    env_value=$(awk -F'\t' -v k="$key" '
-      BEGIN {rv=1}
-      $1 == ".env" && match($2, "^\\s*(\\w+)=(|.*\\S)", m) {
-        if (m[1] == k) {print m[2]; rv=0; exit}
-      }
-      END {exit(rv)}
-    ' <<<"$data") && env_found=1 || env_found=0
-    (( env_found )) && { env_value=$(unquote "$env_value"); show "$key" "$env_value"; }
-    echo
+  # Every real key name this node's .env or containers actually define, so a
+  # KEY-PATTERN can be matched against what exists instead of a fixed list.
+  mapfile -t all_keys < <(awk -F'\t' '
+    match($2, "^\\s*([A-Za-z_][A-Za-z0-9_]*)=", m) {
+      if (m[1] != "ENV_MTIME" && m[1] != "CREATED") print m[1]
+    }
+  ' <<<"$data" | sort -u)
 
-    (( env_only )) && continue
+  for pattern in "$@"; do
+    mapfile -t matched_keys < <(printf '%s\n' "${all_keys[@]}" | grep -E -- "$pattern")
 
-    # Collapse the containers that agree onto one line, in the order docker
-    # returned them, so a node with five containers sharing a value costs one
-    # line and a node whose containers disagree costs one line each.
-    order=()
-    declare -A holders=()
-    while IFS=$'\t' read -r svc val; do
-      [[ -n "$svc" ]] || continue
-      if [[ -z "${holders[$val]+set}" ]]; then
-        order+=("$val")
-        holders[$val]=$svc
-      else
-        holders[$val]+=",$svc"
-      fi
-    done < <(awk -F'\t' -v k="$key" '
-      $1 != ".env" && match($2, "^(\\w+)=(.*)$", m) {
-        if (m[1] == k) {print $1 "\t" m[2]}
-      }
-    ' <<<"$data")
-
-    if (( ${#order[@]} == 0 )); then
-      printf '%-22s %-34s %s\n' "" "  -> no container defines it" ""
-    else
-      for val in "${order[@]}"; do
-        printf '%-22s %-34s ' "" "  -> ${holders[$val]}"
-        show "$key" "$val"
-        if (( ! env_found )); then
-          printf '  NOT IN .env'
-        elif [[ "$val" != "$env_value" ]]; then
-          label=STALE
-          if [[ -n "$env_mtime" ]]; then
-            for svc in ${holders[$val]//,/ }; do
-              c=${created_epoch[$svc]:-}
-              if [[ -n "$c" && "$c" -gt "$env_mtime" ]]; then
-                label="ENV OVERRIDE"
-                break
-              fi
-            done
-          fi
-          printf '  %s' "$label"
-        fi
-        echo
-      done
+    if (( ${#matched_keys[@]} == 0 )); then
+      printf '%-20s %-36s (no matching keys)\n' "$node" "$pattern"
+      continue
     fi
-    unset holders
+
+    for key in "${matched_keys[@]}"; do
+      printf '%-20s %-36s ' "$node" "$key"
+      env_value=$(awk -F'\t' -v k="$key" '
+        BEGIN {rv=1}
+        $1 == ".env" && match($2, "^\\s*(\\w+)=(|.*\\S)", m) {
+          if (m[1] == k) {print m[2]; rv=0; exit}
+        }
+        END {exit(rv)}
+      ' <<<"$data") && env_found=1 || env_found=0
+      (( env_found )) && { env_value=$(unquote "$env_value"); show "$key" "$env_value"; }
+      echo
+
+      (( env_only )) && continue
+
+      # Collapse the containers that agree onto one line, in the order docker
+      # returned them, so a node with five containers sharing a value costs one
+      # line and a node whose containers disagree costs one line each.
+      order=()
+      declare -A holders=()
+      while IFS=$'\t' read -r svc val; do
+        [[ -n "$svc" ]] || continue
+        if [[ -z "${holders[$val]+set}" ]]; then
+          order+=("$val")
+          holders[$val]=$svc
+        else
+          holders[$val]+=",$svc"
+        fi
+      done < <(awk -F'\t' -v k="$key" '
+        $1 != ".env" && match($2, "^(\\w+)=(.*)$", m) {
+          if (m[1] == k) {print $1 "\t" m[2]}
+        }
+      ' <<<"$data")
+
+      if (( ${#order[@]} == 0 )); then
+        printf '%-22s %-34s %s\n' "" "  -> no container defines it" ""
+      else
+        for val in "${order[@]}"; do
+          printf '%-22s %-34s ' "" "  -> ${holders[$val]}"
+          show "$key" "$val"
+          if (( ! env_found )); then
+            printf '  NOT IN .env'
+          elif [[ "$val" != "$env_value" ]]; then
+            label=STALE
+            if [[ -n "$env_mtime" ]]; then
+              for svc in ${holders[$val]//,/ }; do
+                c=${created_epoch[$svc]:-}
+                if [[ -n "$c" && "$c" -gt "$env_mtime" ]]; then
+                  label="ENV OVERRIDE"
+                  break
+                fi
+              done
+            fi
+            printf '  %s' "$label"
+          fi
+          echo
+        done
+      fi
+      unset holders
+    done
   done
 done
