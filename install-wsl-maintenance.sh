@@ -40,11 +40,18 @@ compactor="$here/compact-wsl-vhdx.ps1"
 
 TASK_NAME=${TASK_NAME:-WSL VHDX maintenance}
 CRON_MARK='wsl-disk-janitor.sh'
-# A Windows path, single backslashes. It reaches awk through the environment
-# rather than -v because awk processes escape sequences in a -v assignment, so
-# a path passed that way silently loses (or doubles) its backslashes depending
-# on how it was quoted here.
-SWAP_PATH_WIN=${SWAP_PATH_WIN:-'C:\wsl\swap.vhdx'}
+# Doubled backslashes, written literally into .wslconfig, which is the form
+# Microsoft's own documentation uses. WSL's config parser treats a backslash as
+# an escape, so a single-backslash path is read as "C:wslswap.vhdx", and WSL
+# then falls back to its default location *silently* - no warning, no error,
+# just a swap file back under Temp\<guid>\. That was measured here on
+# 2026-09-10: the rest of the file was clearly being honoured (memory and
+# processor caps both in effect) while this one key did nothing.
+#
+# It reaches awk through the environment rather than -v because awk ALSO
+# processes escape sequences in a -v assignment, which would undo the doubling
+# on the way in.
+SWAP_PATH_WIN=${SWAP_PATH_WIN:-'C:\\wsl\\swap.vhdx'}
 
 dry=0; uninstall=0
 while (( $# )); do

@@ -114,11 +114,30 @@ used_bytes_in_wsl() { df -B1 --output=used / 2>/dev/null | tail -1 | tr -dc 0-9;
 # printing "-0.0 GB" because a few hundred bytes moved the wrong way.
 gb() { awk -v b="${1:-0}" 'BEGIN { v = b / 1073741824; if (v > -0.05 && v < 0.05) v = 0; printf "%.1f", v }'; }
 
-# The distro's backing file. Derived rather than hardcoded: a Store-installed
-# Ubuntu lives under Packages/<publisher-id>/LocalState, and re-registering the
-# distro changes that id.
+# The distro's backing file. The registry is asked first because it is the only
+# authoritative answer: the Packages/<publisher-id>/LocalState path is merely
+# where a *Store-installed* Ubuntu happens to sit. A distro that has been
+# exported and re-imported - the one route that actually reclaims dead space -
+# lives wherever it was imported to, and the glob would then quietly match
+# nothing and report "dead space unknown" forever instead of failing loudly.
+# The glob stays as a fallback for when interop is being flaky, which it is.
 find_vhdx() {
-  local p
+  local base p
+  # WSL_DISTRO_NAME is set inside the distro but is NOT visible to a Windows
+  # process unless it is named in WSLENV. Without this the comparison below
+  # silently matched nothing and the glob quietly carried the function - which
+  # is precisely the failure this lookup exists to prevent.
+  base=$(WSLENV="${WSLENV:+$WSLENV:}WSL_DISTRO_NAME" powershell.exe -NoProfile -Command '
+    Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss" -ErrorAction SilentlyContinue |
+      ForEach-Object { $d = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+        if ($d.DistributionName -eq $env:WSL_DISTRO_NAME -and $d.BasePath) { $d.BasePath } }
+  ' 2>/dev/null | tr -d '\r\n')
+  if [[ -n "$base" ]]; then
+    # BasePath is sometimes stored with a \\?\ prefix that wslpath rejects.
+    base=${base#\\\\?\\}
+    p=$(wslpath "$base" 2>/dev/null)/ext4.vhdx
+    [[ -f "$p" ]] && { printf '%s' "$p"; return 0; }
+  fi
   for p in /mnt/c/Users/*/AppData/Local/Packages/*Ubuntu*/LocalState/ext4.vhdx; do
     [[ -f "$p" ]] && { printf '%s' "$p"; return 0; }
   done
