@@ -14,6 +14,22 @@
     Export/unregister/import sidesteps all of that: the import writes a fresh
     filesystem containing only live files, so the new VHDX lands at its used
     size. Measured before this run: 88.6 GB allocated against 57.7 GB used.
+    Run on 2026-09-11: 88.6 GB allocated -> 57 GB, in 28 + 12.5 minutes.
+
+    Two things about the NEW file are settled here rather than left to chance,
+    because both were found the hard way on 2026-09-11:
+
+      - It is imported into a directory that is NOT NTFS-compressed. C: had
+        been compressed with inheritance, so the fresh VHDX came back
+        compressed - 1,807,061 extents at birth, one per 64 KB compression
+        unit - and NTFS cannot grow a file whose extent list outgrows its MFT
+        record. The import directory is created and marked uncompressed
+        (compact /u) before the import; nothing else's attributes are touched.
+      - It is made NON-SPARSE straight after the import, while apparent and
+        allocated size are still equal and the conversion is therefore free.
+        A sparse VHDX cannot be compacted in place (diskpart refuses it), and
+        converting one later inflates it to its apparent size. This is the
+        regime compact-wsl-vhdx.ps1 assumes; see its .NOTES.
 
     THE DANGEROUS WINDOW is between unregister and import, where the tar is the
     only copy of the distro - including the docker volumes holding real state
@@ -153,6 +169,20 @@ if (Test-Path $ImportPath) {
         Stop-Here ("{0} already exists and is not empty. Refusing to import over it without -Force." -f $ImportPath)
     }
 }
+# The import directory is created now, so its NTFS compression state can be
+# set before anything is written into it. A parent compressed with inheritance
+# (all of C: on 2026-09-11) would otherwise hand the flag to the new VHDX.
+if (-not (Test-Path $ImportPath)) { New-Item -ItemType Directory -Path $ImportPath -Force | Out-Null }
+if ((Get-Item -LiteralPath $ImportPath -Force).Attributes -band [IO.FileAttributes]::Compressed) {
+    Write-Log ('{0} is NTFS-compressed (inherited); clearing that so the new VHDX is not.' -f $ImportPath) 'WARN'
+    & compact.exe /u $ImportPath | Out-Null
+    if ((Get-Item -LiteralPath $ImportPath -Force).Attributes -band [IO.FileAttributes]::Compressed) {
+        Stop-Here ('could not clear the compression attribute on {0}. A compressed VHDX is not safe to run on; fix the directory and retry.' -f $ImportPath)
+    }
+    Write-Log ('{0} is now uncompressed.' -f $ImportPath)
+} else {
+    Write-Log ('{0} is not NTFS-compressed.' -f $ImportPath)
+}
 
 $tar = Join-Path $WorkDir ('{0}.tar' -f $Distro)
 if ($UseExistingTar) {
@@ -291,6 +321,34 @@ if ($importRc -ne 0) {
 Write-Log ('imported in {0:n1} min' -f $swImport.Elapsed.TotalMinutes)
 
 # ---------------------------------------------------------------------------
+# Settle the new file's NTFS state while doing so is free.
+# ---------------------------------------------------------------------------
+
+$newVhdx = Join-Path $ImportPath 'ext4.vhdx'
+$attrs = (Get-Item -LiteralPath $newVhdx -Force).Attributes
+Write-Log ('new ext4.vhdx attributes: {0}' -f $attrs)
+if ($attrs -band [IO.FileAttributes]::Compressed) {
+    # Should be unreachable after the preflight; if it happens, say so loudly
+    # rather than quietly running on a file that will stop growing one day.
+    Write-Log ('the new VHDX is NTFS-compressed despite the preflight. Run, with WSL shut down:  compact /u "{0}"' -f $newVhdx) 'ERROR'
+}
+if ($attrs -band [IO.FileAttributes]::SparseFile) {
+    # sparseVhd=true in .wslconfig makes an imported file sparse. Right now
+    # apparent equals allocated, so clearing the flag costs nothing; later it
+    # would inflate the file to its apparent size. The distro is not running
+    # yet, which --set-sparse requires.
+    Write-Log ('wsl --manage {0} --set-sparse false  (free now; expensive later)' -f $Distro)
+    $sparseMsg = Get-WslText @('--manage', $Distro, '--set-sparse', 'false')
+    if ($sparseMsg.Trim()) { Write-Log $sparseMsg.Trim() }
+    $attrs = (Get-Item -LiteralPath $newVhdx -Force).Attributes
+    if ($attrs -band [IO.FileAttributes]::SparseFile) {
+        Write-Log 'the VHDX is still sparse; compact-wsl-vhdx.ps1 will stand down at its gate 1b until this is fixed.' 'WARN'
+    } else {
+        Write-Log 'the VHDX is now non-sparse.'
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Verify what came back.
 # ---------------------------------------------------------------------------
 
@@ -310,10 +368,9 @@ Start-Sleep -Seconds 15
 $vols = ((Get-WslText @('-d', $Distro, '--', 'bash', '-c', 'docker volume ls -q 2>/dev/null | wc -l'))).Trim()
 Write-Log ('docker volumes visible: {0}' -f $vols)
 
-$newVhdx = Join-Path $ImportPath 'ext4.vhdx'
 if (Test-Path $newVhdx) {
     $newGB = [math]::Round((Get-Item $newVhdx).Length / 1GB, 1)
-    Write-Log ('new ext4.vhdx apparent size: {0} GB (was 110.6 GB apparent / 88.6 GB allocated)' -f $newGB)
+    Write-Log ('new ext4.vhdx: {0} GB, attributes {1}' -f $newGB, (Get-Item -LiteralPath $newVhdx -Force).Attributes)
 }
 
 Write-Log ('done. C: free {0} GB' -f (Get-FreeGB))

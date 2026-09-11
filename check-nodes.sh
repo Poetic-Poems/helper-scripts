@@ -52,7 +52,8 @@ out="$(
   docker compose exec -T scheduler jq -r '[.pr, .short] | @tsv'
 )"
 IFS=$'\t' read -r pr short <<<"$out"
-disp image "${pr:-none}  #$short"
+if [ -n "$short" ]; then short="  #$short"; fi
+disp image "${pr:-none}$short"
 
 
 ################################################################################

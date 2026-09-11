@@ -141,9 +141,10 @@ install_task() {
     note "scheduled task '$TASK_NAME' created (hourly, normal privileges)"
     say
     say "  Created without highest privileges, which needs an elevated shell."
-    say "  Everything works; only the diskpart fallback is unavailable, and that"
-    say "  is used solely when 'wsl --manage --set-sparse true' reclaims nothing"
-    say "  by itself. To add it later, run this once as Administrator:"
+    say "  The gates all work, but diskpart - the only thing that compacts a"
+    say "  non-sparse VHDX - needs an elevated token, so the script will stand"
+    say "  down at its gate 1c every hour until the task is recreated. Run this"
+    say "  once as Administrator:"
     say
     say "      schtasks /Create /TN \"$TASK_NAME\" /TR \"$tr_display\" /SC HOURLY /RL HIGHEST /F"
     say

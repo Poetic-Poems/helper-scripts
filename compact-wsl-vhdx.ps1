@@ -15,7 +15,7 @@
     wsl-disk-janitor.sh, running hourly inside WSL, does everything that does
     not. Between them the disk is meant to look after itself.
 
-    Because stopping the distro stops the fleet, the run is gated five ways and
+    Because stopping the distro stops the fleet, the run is gated six ways and
     simply returns if any gate is shut. The scheduled task fires hourly, so a
     run deferred now is retried within the hour and will land in an idle gap on
     its own.
@@ -23,11 +23,15 @@
       1. Due?    A successful compaction within the last -IntervalDays, and
                  dead space under -MinDeadSpaceGB, means there is nothing worth
                  a bounce. Overridden when C: falls under -CriticalFreeGB.
-      1b. Worth  Did the last completed run actually recover anything? If it
-          it?    reclaimed under 1 GB and the file is still sparse, both
-                 in-place levers are spent and another bounce buys nothing.
-                 Keyed on the measured result, so it re-arms by itself if the
-                 VHDX is ever rebuilt non-sparse.
+      1b. Can    diskpart refuses a VHDX that is sparse, NTFS-compressed or
+          it?    encrypted, so on such a file there is nothing a bounce could
+                 do. Asked of the filesystem every run, never remembered. Also
+                 stands down for -IntervalDays after a completed run that
+                 recovered under 1 GB, so a lever that has stopped working
+                 costs one bounce a week rather than one a night.
+      1c. Able?  diskpart needs an elevated token. A task created without
+                 /RL HIGHEST cannot compact anything, so it says so and stands
+                 down instead of stopping the fleet for nothing.
       2. Quiet?  Outside 02:00-06:00 local, only a critically low disk or
                  -Force will proceed.
       3. Idle?   Every scheduler is asked, through its own
@@ -45,13 +49,16 @@
 
       wsl --shutdown
       delete every Temp\<guid>\swap.vhdx  (with the VM down they are all dead)
-      wsl --manage <distro> --set-sparse true
-      diskpart compact vdisk              (only if the above reclaimed nothing,
-                                           we are elevated, AND the file is not
-                                           sparse - see .NOTES, it always is)
+      diskpart compact vdisk              (rewrites the file without the blocks
+                                           the guest has TRIMmed - the one lever
+                                           that works on a non-sparse VHDX)
       wsl -d <distro> -- true             (wsl.conf's [boot] command brings up
                                            cron, docker and tailscaled)
       docker compose up -d in each node directory
+
+    What was reclaimed is measured on the VHDX file itself, before and after.
+    C: free space is not the measure: the swap file is deleted at shutdown and
+    would count as 2 GB "recovered" on every run.
 
     That last step matters and is easy to miss. agent-ops-dashboard-1 and
     agent-ops-tailscale-1 have restart policy on-failure, not unless-stopped,
@@ -59,11 +66,14 @@
     watchtower return by themselves; those two do not.
 
 .NOTES
-    In-place compaction of this VHDX recovers essentially nothing, and that is
-    a property of the file, not a misconfiguration. Established 2026-09-10 by a
-    complete elevated run:
+    Which lever works depends on the NTFS state of the file, and that state
+    has already changed once.
 
-      - "--set-sparse true" is a no-op once the sparse flag is already set. It
+    Until 2026-09-11 the VHDX was SPARSE (sparseVhd=true, plus a one-off
+    --set-sparse true), and in-place compaction recovered essentially nothing.
+    Established by a complete elevated run on 2026-09-10:
+
+      - "--set-sparse true" is a no-op once the flag is already set. It
         reported success and gained 0.5 GB, and even that was the swap file
         being deleted at shutdown: allocated size went 90.0 -> 91 GB across the
         whole run, against 33 GB of dead space.
@@ -75,20 +85,32 @@
         holes in 64 KB units while ext4 frees scattered 4 KB blocks, so nearly
         every host unit keeps at least one live block and cannot be released.
 
-    Gate 1b exists because of this: the levers are spent, and a 7-day timer
-    would otherwise bounce the fleet forever for nothing.
+    On 2026-09-11 the distro was rebuilt (rebuild-wsl-vhdx.ps1: export,
+    unregister, import), which wrote a fresh 57 GB file for 56 GB used, and
+    straight afterwards the file was made NON-SPARSE ("wsl --manage Ubuntu
+    --set-sparse false") and NTFS-uncompressed ("compact /u"). That is the
+    regime this script now assumes: the file only ever grows, the guest TRIMs
+    hourly (the janitor's fstrim) so the VHDX knows which of its blocks are
+    dead, and "diskpart compact vdisk" rewrites it without them. That needs
+    the distro stopped and an elevated token, which is what the gates are for.
 
-    The only thing that genuinely reclaims the dead space is rebuilding the
-    VHDX - wsl --export, wsl --unregister, wsl --import - which rewrites it at
-    its used size. It does not fit today: the export tar would be roughly the
-    58 GB used inside WSL, against 48 GB free on C:. Piping the export through
-    a compressor (cmd's pipes are binary-safe; PowerShell's are not) would fit,
-    but the tar is the only copy of the distro between unregister and import,
-    so it wants verifying first and is not something to schedule.
+    Two rules follow:
 
-    NEVER run "wsl --manage Ubuntu --set-sparse false" on this machine. It
-    inflates the file to its full apparent size, which is 111 GiB against
-    roughly 48 GiB free, and fills the disk it is meant to be emptying.
+      - "--set-sparse false" inflates a sparse file to its full apparent size.
+        It is nearly free straight after a rebuild (apparent = allocated) and
+        ruinous once dead space has accrued (111 GiB against 48 GiB free on
+        2026-09-10). Never run it on a file with a large gap between apparent
+        and allocated size.
+      - The file must not be NTFS-compressed. On 2026-09-11 C: had been
+        compressed with inheritance, so the freshly imported VHDX came back
+        compressed: 1,807,061 extents at birth, one per 64 KB compression
+        unit. NTFS cannot grow a file whose extent list outgrows its MFT
+        record, and on a VM disk that surfaces as ext4 write errors. diskpart
+        refuses compressed files as well. Gate 1b checks for it every run.
+
+    If the file is ever sparse again this script stands down at gate 1b, and
+    the only way back is another rebuild. rebuild-wsl-vhdx.ps1 now leaves the
+    imported file non-sparse and uncompressed itself.
 
     A shutdown terminates everything in WSL, including any interactive session
     running there. That is why the default window is the small hours.
@@ -164,15 +186,21 @@ function Test-Elevated {
         [Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-# NTFS marks a file sparse; the VHD API refuses to compact one. Asked of the
-# filesystem rather than assumed, because a rebuilt VHDX would not be sparse
-# and the diskpart path would be worth taking again.
-function Test-SparseFile {
+# The VHD API refuses to compact a file that is sparse, NTFS-compressed or
+# encrypted ("Virtual hard disk files must be uncompressed and unencrypted and
+# must not be sparse"). Asked of the filesystem on every run rather than
+# remembered, because the state has changed under this script before: the
+# 2026-09-11 rebuild came back sparse AND compressed until both were undone by
+# hand. Returns the reason, or $null when diskpart can work on the file.
+function Get-UncompactableReason {
     param([string]$Path)
     try {
-        $attr = (Get-Item -LiteralPath $Path -Force).Attributes
-        return [bool]($attr -band [IO.FileAttributes]::SparseFile)
-    } catch { return $false }
+        $attr = (Get-Item -LiteralPath $Path -Force -ErrorAction Stop).Attributes
+    } catch { return 'unreadable' }
+    if ($attr -band [IO.FileAttributes]::SparseFile) { return 'sparse' }
+    if ($attr -band [IO.FileAttributes]::Compressed) { return 'NTFS-compressed' }
+    if ($attr -band [IO.FileAttributes]::Encrypted)  { return 'encrypted' }
+    return $null
 }
 
 # Rebuilt into a fixed shape on every read rather than returned as parsed.
@@ -193,6 +221,9 @@ function Get-State {
         lastAttempt     = if (& $has 'lastAttempt')     { $raw.lastAttempt }     else { $null }
         lastResult      = if (& $has 'lastResult')      { $raw.lastResult }      else { 'never run' }
         lastReclaimedGB = if (& $has 'lastReclaimedGB') { $raw.lastReclaimedGB } else { $null }
+        # When the run last got as far as diskpart, success or not. lastAttempt
+        # also moves on every deferral, so it cannot key the futility check.
+        lastCompleted   = if (& $has 'lastCompleted')   { $raw.lastCompleted }   else { $null }
     }
 }
 
@@ -229,7 +260,7 @@ Write-Log ("C: free {0} GB; last successful compaction: {1}" -f $freeGB,
            $(if ($state.lastSuccess) { $state.lastSuccess } else { 'never' }))
 
 if (-not $vhdx) {
-    Write-Log "ext4.vhdx not found under LOCALAPPDATA\Packages - nothing to do." 'WARN'
+    Write-Log "ext4.vhdx not found (registry BasePath, then LOCALAPPDATA\Packages) - nothing to do." 'WARN'
     exit 1
 }
 
@@ -251,30 +282,54 @@ if (-not ($Force -or $critical -or ($dueBySchedule -and ($dueByDeadSpace -or $nu
 if ($critical) { Write-Log ("C: is under {0} GB free - treating as urgent." -f $CriticalFreeGB) 'WARN' }
 
 # ---------------------------------------------------------------------------
-# Gate 1b: did the last completed attempt actually recover anything?
+# Gate 1b: can a bounce do anything at all?
 #
-# Every run costs a full fleet stop and restart. On 2026-09-10 a complete,
-# elevated run reclaimed 0.5 GB against 33 GB of dead space - and even that was
-# the swap file being deleted at shutdown, not compaction: allocated size went
-# 90.0 -> 91 GB across the run. Both in-place levers are spent on this file
-# (set-sparse is a no-op once the flag is already set; diskpart refuses a
-# sparse file outright), so repeating on a 7-day timer would bounce the fleet
-# forever to recover nothing.
+# Every run costs a full fleet stop and restart, so it is not started unless
+# the one lever can actually move. Two things stop it:
 #
-# The gate keys on the measured result rather than on a hardcoded "give up",
-# so it re-arms by itself the moment the situation changes - a rebuilt,
-# non-sparse VHDX makes the diskpart path viable again and this stops firing.
-# -Force always overrides, which is what makes it testable.
-$lastGain = $state.lastReclaimedGB
-if ((-not $Force) -and ($null -ne $lastGain) -and ([double]$lastGain -lt 1) -and (Test-SparseFile $vhdx.FullName)) {
-    Write-Log ("last completed run recovered {0} GB and the file is still sparse, so both " -f $lastGain +
-               "in-place levers are exhausted - not bouncing the fleet to recover nothing.")
-    Write-Log "recovering the remaining dead space needs a rebuild (export/import); see .NOTES."
+#   - The file's NTFS state. diskpart refuses a sparse, compressed or
+#     encrypted VHDX; on such a file no bounce recovers anything and the only
+#     way out is a rebuild. Not overridable by -Force, because there is
+#     nothing for -Force to do.
+#   - The measured result of the last completed run. If diskpart ran within
+#     the last -IntervalDays and recovered under 1 GB, the janitor's dead-space
+#     figure and reality disagree, and repeating nightly until they agree would
+#     bounce the fleet for nothing. One try a week keeps it visible without
+#     making it a habit. -Force overrides this half, which makes it testable.
+$why = Get-UncompactableReason $vhdx.FullName
+if ($why) {
+    Write-Log ('the VHDX is {0}, which diskpart refuses to compact - a bounce could recover nothing, so not stopping the fleet. See .NOTES: this needs a rebuild.' -f $why) 'WARN'
     if ($critical) {
         Write-Log ("C: is critically low and compaction cannot help it - the janitor's hourly " +
                    "sweep is the only automatic lever left.") 'WARN'
     }
     exit 0
+}
+$lastGain = $state.lastReclaimedGB
+if ((-not $Force) -and $state.lastCompleted -and ($null -ne $lastGain) -and ([double]$lastGain -lt 1)) {
+    $sinceRun = (Get-Date) - [datetime]::Parse($state.lastCompleted)
+    if ($sinceRun.TotalDays -lt $IntervalDays) {
+        Write-Log ('the last completed run ({0:n1} days ago) recovered {1} GB - not bouncing the fleet again until {2} days have passed. Check that run''s log.' -f $sinceRun.TotalDays, $lastGain, $IntervalDays)
+        exit 0
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Gate 1c: is this process able to run diskpart?
+#
+# diskpart needs an elevated token, and a scheduled task only has one if it
+# was created with /RL HIGHEST from an elevated shell. Checked before the gates
+# that cost something and long before the shutdown, because a run that cannot
+# compact must not stop the fleet. The fix is one command, so the log carries
+# it. A dry run reports the verdict and carries on, so the other gates can
+# still be read from an ordinary prompt.
+# ---------------------------------------------------------------------------
+
+if (-not (Test-Elevated)) {
+    Write-Log 'not elevated: diskpart cannot run, so there is nothing this run could reclaim.' 'WARN'
+    Write-Log ('fix once, from an Administrator prompt:  schtasks /Create /TN "WSL VHDX maintenance" /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ''{0}''" /SC HOURLY /RL HIGHEST /F' -f $PSCommandPath) 'WARN'
+    if (-not $DryRun) { exit 0 }
+    Write-Log 'DRY RUN - continuing through the remaining gates for the report.'
 }
 
 # ---------------------------------------------------------------------------
@@ -420,7 +475,7 @@ if ($DryRun) {
 }
 
 $freeBefore = Get-FreeGB
-Write-Log ("compacting. C: free before: {0} GB; vhdx apparent: {1} GB" -f $freeBefore, [math]::Round($vhdx.Length / 1GB, 1))
+Write-Log ("compacting. C: free before: {0} GB; vhdx: {1} GB" -f $freeBefore, [math]::Round($vhdx.Length / 1GB, 1))
 
 Write-Log "wsl --shutdown"
 $shutdownMsg = Get-WslText @('--shutdown')
@@ -492,49 +547,30 @@ foreach ($s in $swaps) {
     }
 }
 
-# Primary: the supported, unprivileged path. On an already-sparse disk this
-# still walks the file and releases what it can.
-Write-Log ("wsl --manage {0} --set-sparse true" -f $Distro)
-$sparseMsg = Get-WslText @('--manage', $Distro, '--set-sparse', 'true')
-if ($sparseMsg.Trim()) { Write-Log $sparseMsg.Trim() }
+# diskpart rewrites the VHDX without the blocks the guest has TRIMmed. The
+# result is measured on the file itself: with the sparse flag off, Length is
+# exactly what C: is charged for it.
+$lenBefore = (Get-Item -LiteralPath $vhdx.FullName -Force).Length
+Write-Log ('diskpart compact vdisk; vhdx is {0} GB' -f [math]::Round($lenBefore / 1GB, 1))
+$script = Join-Path $env:TEMP 'compact-wsl.txt'
+@(
+    ('select vdisk file="{0}"' -f $vhdx.FullName)
+    'attach vdisk readonly'
+    'compact vdisk'
+    'detach vdisk'
+) | Set-Content -Path $script -Encoding ASCII
+& diskpart.exe /s $script 2>&1 | ForEach-Object { if ("$_".Trim()) { Write-Log ('  ' + "$_".Trim()) } }
+$compactRc = $LASTEXITCODE
+Remove-Item $script -Force -ErrorAction SilentlyContinue
 
-$freeMid = Get-FreeGB
-Write-Log ("C: free after set-sparse: {0} GB (gained {1} GB)" -f $freeMid, [math]::Round($freeMid - $freeBefore, 1))
-
-# Fallback: diskpart rewrites the file, which recovers what hole-punching
-# cannot - but only on a file that is NOT sparse. Measured here on 2026-09-10,
-# from an elevated shell, against this exact VHDX:
-#
-#   DiskPart has encountered an error: The requested operation could not be
-#   completed due to a virtual disk system limitation. Virtual hard disk files
-#   must be uncompressed and unencrypted and must not be sparse.
-#
-# That is the VHD API refusing, not a permissions problem. Elevation does not
-# help, and neither would Hyper-V's Optimize-VHD, which calls the same API.
-# Checked before running diskpart so the log explains itself instead of
-# printing an error that looks like something to go and fix.
-if (($freeMid - $freeBefore) -lt 1) {
-    if (Test-SparseFile $vhdx.FullName) {
-        Write-Log ("set-sparse reclaimed little, and diskpart cannot compact a sparse file " +
-                   "- the VHD API refuses. No in-place option remains; see .NOTES.") 'WARN'
-    } elseif (Test-Elevated) {
-        Write-Log "set-sparse reclaimed little; falling back to diskpart compact vdisk."
-        $script = Join-Path $env:TEMP 'compact-wsl.txt'
-        @(
-            ('select vdisk file="{0}"' -f $vhdx.FullName)
-            'attach vdisk readonly'
-            'compact vdisk'
-            'detach vdisk'
-        ) | Set-Content -Path $script -Encoding ASCII
-        & diskpart.exe /s $script 2>&1 | ForEach-Object { Write-Log $_ }
-        Remove-Item $script -Force -ErrorAction SilentlyContinue
-    } else {
-        Write-Log "set-sparse reclaimed little and diskpart needs elevation - skipping the fallback." 'WARN'
-    }
-}
-
+$lenAfter  = (Get-Item -LiteralPath $vhdx.FullName -Force).Length
+$reclaimed = [math]::Round(($lenBefore - $lenAfter) / 1GB, 1)
 $freeAfter = Get-FreeGB
-Write-Log ("C: free after compaction: {0} GB (recovered {1} GB in total)" -f $freeAfter, [math]::Round($freeAfter - $freeBefore, 1))
+if ($compactRc -ne 0) {
+    Write-Log ('diskpart exited {0}; vhdx {1} -> {2} GB' -f $compactRc, [math]::Round($lenBefore / 1GB, 1), [math]::Round($lenAfter / 1GB, 1)) 'ERROR'
+} else {
+    Write-Log ('vhdx {0} -> {1} GB (recovered {2} GB); C: free {3} GB' -f [math]::Round($lenBefore / 1GB, 1), [math]::Round($lenAfter / 1GB, 1), $reclaimed, $freeAfter)
+}
 
 # ---------------------------------------------------------------------------
 # Bring it all back.
@@ -554,7 +590,8 @@ do {
 
 if (-not $dockerUp) {
     Write-Log "docker did not come up within 120s - the fleet needs a hand." 'ERROR'
-    $state.lastAttempt = (Get-Date).ToString('o'); $state.lastResult = 'compacted, but docker did not restart'
+    $state.lastAttempt = (Get-Date).ToString('o'); $state.lastCompleted = $state.lastAttempt
+    $state.lastReclaimedGB = $reclaimed; $state.lastResult = 'compacted, but docker did not restart'
     Set-State $state
     exit 1
 }
@@ -571,13 +608,18 @@ foreach ($d in $NodeDirs) {
 $names = & wsl.exe -d $Distro -- docker ps --format '{{.Names}}' 2>$null
 Write-Log ("containers running: {0}" -f (@($names | Where-Object { $_ }) -join ', '))
 
-$reclaimed = [math]::Round($freeAfter - $freeBefore, 1)
-$state.lastSuccess = (Get-Date).ToString('o')
-$state.lastAttempt = (Get-Date).ToString('o')
+$now = (Get-Date).ToString('o')
+$state.lastAttempt   = $now
+$state.lastCompleted = $now
 # Kept as its own field, not parsed back out of lastResult, because gate 1b
 # reads it and a gate that depends on scraping a human-readable string is one
 # reworded log line away from silently never firing.
 $state.lastReclaimedGB = $reclaimed
-$state.lastResult  = ('recovered {0} GB; C: free {1} GB' -f $reclaimed, $freeAfter)
+if ($compactRc -eq 0) {
+    $state.lastSuccess = $now
+    $state.lastResult  = ('recovered {0} GB; vhdx {1} GB; C: free {2} GB' -f $reclaimed, [math]::Round($lenAfter / 1GB, 1), $freeAfter)
+} else {
+    $state.lastResult  = ('diskpart failed (exit {0}); fleet restarted; C: free {1} GB' -f $compactRc, $freeAfter)
+}
 Set-State $state
-Write-Log ("done. {0}" -f $state.lastResult)
+Write-Log ('done. {0}' -f $state.lastResult)

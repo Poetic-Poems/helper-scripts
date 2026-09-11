@@ -274,14 +274,23 @@ say
 # --volumes is absent on purpose; see the header. This removes stopped
 # containers, dangling images and build cache, none of which any running
 # container depends on.
+#
+# Anything compose manages is excluded. A fleet container that has been
+# stopped on purpose (`docker stop`, or the whole fleet taken down for an
+# export) is indistinguishable to `prune` from an exited one-off, and on
+# 2026-09-11 the routine sweep deleted all eight agent-ops containers and
+# their networks while the nodes were deliberately down. Compose recreates
+# them, but from today's .env rather than the config they were running with,
+# and a janitor has no business changing that. Every prune command honours
+# `label!=`, and compose labels everything it creates with its project name.
 
 say "== docker"
 if docker info >/dev/null 2>&1; then
   if (( DRY )); then
-    note "would run  docker system prune -f   (never --volumes)"
+    note "would run  docker system prune -f --filter label!=com.docker.compose.project   (never --volumes)"
     docker system df 2>/dev/null | sed 's/^/  /'
   else
-    docker system prune -f 2>/dev/null | sed 's/^/  /'
+    docker system prune -f --filter 'label!=com.docker.compose.project' 2>/dev/null | sed 's/^/  /'
   fi
   # Reported, never swept: the fleet's own state volumes. If these dominate,
   # the fix is agent-ops's retention, not a janitor.
