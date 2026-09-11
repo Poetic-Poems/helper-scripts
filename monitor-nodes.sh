@@ -19,11 +19,13 @@ CMD='
     RED=$'\''\033[1;31m'\''
     GRN=$'\''\033[1;32m'\''
     BLU=$'\''\033[1;34m'\''
+    YLW=$'\''\033[1;93m'\''
     OFF=$'\''\e[m'\''
-    ~/Code/Poetic-Poems/helper-scripts/check-nodes.sh |
+    ~/Code/Poetic-Poems/helper-scripts/check-nodes.sh 1> >(
     sed -uE -es"/\<(ENABLED|ok)\>/$GRN&$OFF/"  \
             -es"/\<RUNNING\>/$RED&$OFF/"       \
             -es"/\<idle\>/$BLU&$OFF/"
+    ) 2> >( sed -u s"/.*/$YLW&$OFF/" )
   '
 PERIOD=300
 PHASE=240
