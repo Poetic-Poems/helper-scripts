@@ -207,15 +207,21 @@ for node in "${nodes[@]}"; do
       # Collapse the containers that agree onto one line, in the order docker
       # returned them, so a node with five containers sharing a value costs one
       # line and a node whose containers disagree costs one line each.
+      #
+      # Indexed by "=$val" rather than "$val": bash's associative arrays
+      # refuse an empty string as a subscript outright ("bad array
+      # subscript"), and a container can legitimately define VAR= with no
+      # value.  Any fixed non-empty prefix keeps the mapping one-to-one.
       order=()
       declare -A holders=()
       while IFS=$'\t' read -r svc val; do
         [[ -n "$svc" ]] || continue
-        if [[ -z "${holders[$val]+set}" ]]; then
+        idx="=$val"
+        if [[ -z "${holders[$idx]+set}" ]]; then
           order+=("$val")
-          holders[$val]=$svc
+          holders[$idx]=$svc
         else
-          holders[$val]+=",$svc"
+          holders[$idx]+=",$svc"
         fi
       done < <(awk -F'\t' -v k="$key" '
         $1 != ".env" && match($2, "^(\\w+)=(.*)$", m) {
@@ -227,14 +233,15 @@ for node in "${nodes[@]}"; do
         printf '%-22s %-34s %s\n' "" "  -> no container defines it" ""
       else
         for val in "${order[@]}"; do
-          printf '%-22s %-34s ' "" "  -> ${holders[$val]}"
+          idx="=$val"
+          printf '%-22s %-34s ' "" "  -> ${holders[$idx]}"
           show "$key" "$val"
           if (( ! env_found )); then
             printf '  NOT IN .env'
           elif [[ "$val" != "$env_value" ]]; then
             label=STALE
             if [[ -n "$env_mtime" ]]; then
-              for svc in ${holders[$val]//,/ }; do
+              for svc in ${holders[$idx]//,/ }; do
                 c=${created_epoch[$svc]:-}
                 if [[ -n "$c" && "$c" -gt "$env_mtime" ]]; then
                   label="ENV OVERRIDE"
