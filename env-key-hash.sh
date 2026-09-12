@@ -36,7 +36,7 @@
 #   --env-only        Show only what is staged in .env, skipping the
 #                     container lookup.  Faster, and needs no docker.
 #   -h, --help        Display this help then exit.
-#   -n, --node NODEE  Specify which node to query.  If omitted,
+#   -n, --node NODE   Specify which node to query.  If omitted,
 #                     all nodes are queried.  Available nodes are:
 #                     - ockham-container
 #                     - ockham-2
@@ -134,6 +134,10 @@ collect='
   done
 '
 
+# column widths
+C1=20
+C2=40
+
 # compose strips one layer of matching surrounding quotes when it reads .env,
 # so a quoted value in the file is not a quoted value in the container.
 # Strip it here too, or every quoted value reads as a false STALE.
@@ -152,9 +156,9 @@ show() {  # show KEY VALUE
   printf '(%5d) ' "$(printf '%s' "$value" | wc -c)"
   if [[ "${key,,}" =~ (key|token|secret) ]] &&
      [[ ! "${key,,}" =~ _path$ ]]; then
-    printf '%s' "$(printf '%s' "$value" | md5sum | cut -d' ' -f1)"
+    printf '#%s' "$(printf '%s' "$value" | md5sum | cut -d' ' -f1)"
   else
-    printf '%s' "$value"
+    printf ' %s' "$value"
   fi
 }
 
@@ -186,12 +190,12 @@ for node in "${nodes[@]}"; do
     mapfile -t matched_keys < <(printf '%s\n' "${all_keys[@]}" | grep -E -- "$pattern")
 
     if (( ${#matched_keys[@]} == 0 )); then
-      printf '%-20s %-36s (no matching keys)\n' "$node" "$pattern"
+      printf '%-'$C1's %-'$C2's (no matching keys)\n' "$node" "$pattern"
       continue
     fi
 
     for key in "${matched_keys[@]}"; do
-      printf '%-20s %-36s ' "$node" "$key"
+      printf '%-'$C1's %-'$C2's ' "$node" "$key"
       env_value=$(awk -F'\t' -v k="$key" '
         BEGIN {rv=1}
         $1 == ".env" && match($2, "^\\s*(\\w+)=(|.*\\S)", m) {
@@ -230,11 +234,11 @@ for node in "${nodes[@]}"; do
       ' <<<"$data")
 
       if (( ${#order[@]} == 0 )); then
-        printf '%-22s %-34s %s\n' "" "  -> no container defines it" ""
+        printf '%-'$((C1 + 2))'s %-'$((C2 - 2))'s %s\n' "" "  -> no container defines it" ""
       else
         for val in "${order[@]}"; do
           idx="=$val"
-          printf '%-22s %-34s ' "" "  -> ${holders[$idx]}"
+          printf '%-'$((C1 + 2))'s %-'$((C2 - 2))'s ' "" "  -> ${holders[$idx]}"
           show "$key" "$val"
           if (( ! env_found )); then
             printf '  NOT IN .env'
