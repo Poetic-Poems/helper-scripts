@@ -15,7 +15,7 @@ set -euo pipefail
 WINDOW_NAME="monitor-nodes"                   # Name of the new tmux window.
 PIPE="/tmp/monitor-nodes.pipe"                # Path of the named pipe.
 
-CMD='
+CMD='(
     RED=$'\''\033[1;31m'\''
     GRN=$'\''\033[1;32m'\''
     BLU=$'\''\033[1;34m'\''
@@ -26,7 +26,7 @@ CMD='
             -es"/\<RUNNING\>/$RED&$OFF/"       \
             -es"/\<idle\>/$BLU&$OFF/"
     ) 2> >( sed -u s"/.*/$YLW&$OFF/" )
-  '
+  )'
 PERIOD=300
 PHASE=240
 
