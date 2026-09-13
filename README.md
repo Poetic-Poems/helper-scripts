@@ -16,11 +16,11 @@ name these scripts.
 
 | Script | What it does |
 |--------|--------------|
-| `check-nodes.sh` | Prints one status block per node — the two local stacks under `~/poetic-node-{1,2}` and the two on the tailnet host — from each scheduler's own view. |
+| `check-nodes.sh` | Prints one status block per node — the two local stacks under `~/poetic-node-{1,2}` and the two under `/opt` on the VM — with the scheduler's `--status`, the item its current cycle selected (or `idle`), and the image it runs. |
 | `monitor-nodes.sh` | Runs `check-nodes.sh` continuously in a split tmux window; needs a shell already inside tmux. |
-| `list-escalations.sh [FILTER]` | Lists the pipeline's open escalation issues across the fleet's repositories, optionally filtered by a `jq` expression such as `'.repo|match("^Pullwright")'`. |
-| `count-autonomous-agent-prs.sh` | Counts open pull requests carrying the pipeline's label in every repository `agent-ops`'s `config.json` lists. |
-| `count-autonomous-agent-prs-merged-in-last-N-hours.sh [HOURS]` | The same count for pull requests merged in the last N hours. |
+| `list-escalations.sh [FILTER]` | Lists every open issue labelled `enabler-escalation` or `pw::pager` in each repository cloned under `~/Code/Poetic-Poems` and `~/Code/Pullwright`, as one JSON array, optionally filtered by a `jq` expression such as `'.repo|match("^Pullwright")'`. |
+| `count-autonomous-agent-prs.sh` | Counts every pull request (open or closed) labelled `autonomous-agent` across the repositories `agent-ops`'s `config.json` lists. |
+| `count-autonomous-agent-prs-merged-in-last-N-hours.sh` | Lists, per repository, the `autonomous-agent` pull requests merged in the last `N` hours (`N=12` by default, as an environment variable) with who merged each, and the total. |
 | `env-key-hash.sh [options] KEY-PATTERN…` | For each matching `.env` key, shows what is staged in each node's `.env` and what each of its containers is actually using — as a length and either the value or, for a sensitive key, its md5 — and marks a container whose value differs from the file `STALE` (older than the file) or `ENV OVERRIDE` (newer: an exported shell variable won when `docker compose up -d` ran). Use it instead of reading a `.env` or `docker inspect`ing an environment, both of which expose secret values. `show-envs-specific.sh` is a symlink to it. |
 | `show-envs.sh` | Lists every `.env` key on every node with the values of keys named `*KEY`, `*TOKEN` or `*SECRET` masked. `show-envs-all.sh` is a symlink to it. |
 | `deploy-latest-compose.yaml.sh [--dry-run] [--repo ORG/REPO]` | Delivers `origin/main`'s `deploy/docker/compose.yaml` to all four nodes and says per node whether anything changed; an image roll never carries compose-level configuration, and nothing restarts until `docker compose up -d` runs in the node's directory. |
