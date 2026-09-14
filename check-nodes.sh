@@ -70,7 +70,7 @@ BEGIN {
     $sign = $diff =~ s/^-// ? "a" : "to ";
     @units       = qw/ w  d  h  m  s /;
     @multipliers = qw/   7 24 60 60  /;
-    while (1) {
+    while (@multipliers) {
       $multiplier = pop @multipliers;
       $diff > 1.5*$multiplier or last;
       $diff /= $multiplier;
