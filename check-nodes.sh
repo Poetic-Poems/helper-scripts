@@ -68,9 +68,18 @@ BEGIN {
     $then = `date -d"$1" +%s`;
     $diff = $then - $now;
     $sign = $diff =~ s/^-// ? "a" : "to ";
-    sprintf("%s (%3d minutes %sgo)", $timestamp, $diff/60, $sign)
+    @units       = qw/ w  d  h  m  s /;
+    @multipliers = qw/   7 24 60 60  /;
+    while (@multipliers) {
+      $multiplier = pop @multipliers;
+      $diff > 1.5*$multiplier or last;
+      $diff /= $multiplier;
+      pop @units;
+    }
+    sprintf('%s (%d%s %sgo)', $timestamp, $diff, $units[-1], $sign)
   }
 }
 s/((?:\d\d[-T:Z]?){7})/ago/ge;
+s/ (\d+)([wdhms] (?:a|to )go)\b/sprintf '% 3d%s', $1, $2/eg;
 s/^(\S*?:\s*)(?=\S)/$1." "x(16-length$1)/e;
 s/^(  \S+)( \S+)/sprintf '%-35s%-5s',$1,$2/e;
