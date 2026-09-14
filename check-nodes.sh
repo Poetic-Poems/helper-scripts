@@ -69,14 +69,14 @@ BEGIN {
     $diff = $then - $now;
     $sign = $diff =~ s/^-// ? "a" : "to ";
     @units       = qw/ w  d  h  m  s /;
-    @multipliers = qw/   7 24 60 60  /;
+    @multipliers = qw/    7 24 60 60 /;
     while (@multipliers) {
       $multiplier = pop @multipliers;
-      $diff > 1.5*$multiplier or last;
+      $diff > 1.65*$multiplier or last;
       $diff /= $multiplier;
       pop @units;
     }
-    sprintf('%s (%d%s %sgo)', $timestamp, $diff, $units[-1], $sign)
+    sprintf('%s (%.0f%s %sgo)', $timestamp, $diff, $units[-1], $sign)
   }
 }
 s/((?:\d\d[-T:Z]?){7})/ago/ge;
