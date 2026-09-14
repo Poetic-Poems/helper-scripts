@@ -16,16 +16,24 @@ WINDOW_NAME="monitor-nodes"                   # Name of the new tmux window.
 PIPE="/tmp/monitor-nodes.pipe"                # Path of the named pipe.
 
 CMD='(
-    RED=$'\''\033[1;31m'\''
-    GRN=$'\''\033[1;32m'\''
-    BLU=$'\''\033[1;34m'\''
+    red=$'\''\033[1;31m'\''
+    grn=$'\''\033[1;32m'\''
+    blu=$'\''\033[1;34m'\''
     YLW=$'\''\033[1;93m'\''
-    OFF=$'\''\e[m'\''
+    CYN=$'\''\033[1;96m'\''
+    off=$'\''\e[m'\''
     ~/Code/Poetic-Poems/helper-scripts/check-nodes.sh 1> >(
-    sed -uE -es"/\<(ENABLED|ok)\>/$GRN&$OFF/"  \
-            -es"/\<RUNNING\>/$RED&$OFF/"       \
-            -es"/\<idle\>/$BLU&$OFF/"
-    ) 2> >( sed -u s"/.*/$YLW&$OFF/" )
+      sed -uE                                               \
+        -es"/(.{$((COLUMNS - 1))})/\\1\\n/g"                \
+        -es"/^(node-name:\\s*)(.*\\S)/\\1$CYN\\2$off/"      \
+        -es"/\<(ENABLED|ok)\>/$grn&$off/"                   \
+        -es"/\<RUNNING\>/$red&$off/"                        \
+        -es"/\<idle\>/$blu&$off/"                           \
+    ) 2> >(
+      sed -uE                                               \
+        -es"/(.{$((COLUMNS - 1))})/\\1\\n/g"                \
+        -es"/.*/$YLW&$off/"                                 \
+    )
   )'
 PERIOD=300
 PHASE=240
