@@ -80,6 +80,6 @@ BEGIN {
   }
 }
 s/((?:\d\d[-T:Z]?){7})/ago/ge;
-s/(\d+)([wdhms] (?:a|to )go)\b/sprintf '% 2d%s', $1, $2/eg;
+s/ (\d+)([wdhms] (?:a|to )go)\b/sprintf '% 3d%s', $1, $2/eg;
 s/^(\S*?:\s*)(?=\S)/$1." "x(16-length$1)/e;
 s/^(  \S+)( \S+)/sprintf '%-35s%-5s',$1,$2/e;
