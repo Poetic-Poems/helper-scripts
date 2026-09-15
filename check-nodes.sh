@@ -33,16 +33,26 @@ disp host "$(hostname)"
 disp node-dir "$D"
 disp node-name "$(awk -F= '/^NODE_NAME=/{print $2}' .env)"
 docker compose exec -T scheduler /app/agent-cycle.sh --status </dev/null
-item="$(docker compose exec -T scheduler jq -sr '
-    ([.[] | select(.event=="cycle-start")] | last) as $s
-    | if $s == null then "idle" else
-        (map(select(.cycle == $s.cycle))) as $c
-        | if ($c | any(.event=="cycle-end")) then "idle" else
-            ([$c[] | select(.event=="selection")] | last) as $sel
-            | if $sel == null then "selecting" else "\($sel.repo) \($sel.item)" end
-          end
-      end
-  ' /home/agent/.local/state/poetic-agents/log.jsonl 2>/dev/null </dev/null)"
+# The item the running cycle holds, keyed on the cycle that holds lock.json —
+# the same fact `--status` reads for its `cycle:` line — and not on the newest
+# cycle-start. While a cycle runs, every scheduled firing logs a cycle-start
+# and an immediate cycle-end as it stands down, so the newest cycle is nearly
+# always one of those no-ops, and keying on it reported `idle` for a node an
+# hour into an implementer stage (2026-09-15). A cycle's id ends in the pid
+# that lock.json records, which is how the two are matched here.
+state=/home/agent/.local/state/poetic-agents
+pid="$(docker compose exec -T scheduler jq -r '.pid // empty' "$state/lock.json" 2>/dev/null </dev/null)"
+if [ -n "$pid" ] && docker compose exec -T scheduler test -d "/proc/$pid" </dev/null 2>/dev/null; then
+  item="$(docker compose exec -T scheduler jq -sr --arg pid "$pid" '
+      ([.[] | select(.event=="cycle-start") | select(.cycle | tostring | endswith("-" + $pid))] | last) as $s
+      | if $s == null then "selecting" else
+          ([.[] | select(.cycle == $s.cycle and .event=="selection")] | last) as $sel
+          | if $sel == null then "selecting" else "\($sel.repo) \($sel.item)" end
+        end
+    ' "$state/log.jsonl" 2>/dev/null </dev/null)"
+else
+  item=idle
+fi
 disp item "${item:-idle}"
 out="$(
   docker compose exec -T scheduler bash -lc '
