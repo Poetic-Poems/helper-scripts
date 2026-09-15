@@ -25,11 +25,15 @@ CMD='(
     indent_length=16
     indent=$(printf "%${indent_length}s")
     wrap_tolerance=6
-    wrap_first=$((COLUMNS - 1))
-    wrap_other=$((wrap_first - indent_length - wrap_tolerance))
+    wrap-first() {
+      echo "$((COLUMNS - 1))"
+    }
+    wrap-other() {
+      echo "$(($(wrap-first) - indent_length - wrap_tolerance))"
+    }
     ~/Code/Poetic-Poems/helper-scripts/check-nodes.sh 1> >(
       sed -uE                                               \
-        -es"/(^.{$wrap_first}|.{$wrap_other})/\\1\\n/g"     \
+        -es"/(^.{$(wrap-first)}|.{$(wrap-other)})/\\1\\n/g" \
         -es"/ ([^ ]{1,$wrap_tolerance})\\n/\\n\\1/g"        \
         -es"/\\n/\\n$indent/g"                              \
         -es"/^(node-name:\\s*)(.*\\S)/\\1$CYN\\2$off/"      \
@@ -88,6 +92,7 @@ tee >(
     print shift @l while @l > \$rows;
   ' >'$PIPE'
 )
+rm -v '$PIPE'
 "
 
 # Left pane: consumer.
