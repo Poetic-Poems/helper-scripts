@@ -13,7 +13,7 @@ set -euo pipefail
 # --- Configuration ---------------------------------------------------------
 
 WINDOW_NAME="monitor-nodes"                   # Name of the new tmux window.
-PIPE="/tmp/monitor-nodes.pipe"                # Path of the named pipe.
+PIPE="/tmp/monitor-nodes.$$.pipe"             # Path of the named pipe.
 
 CMD='(
     red=$'\''\033[1;31m'\''
@@ -22,9 +22,16 @@ CMD='(
     YLW=$'\''\033[1;93m'\''
     CYN=$'\''\033[1;96m'\''
     off=$'\''\e[m'\''
+    indent_length=16
+    indent=$(printf "%${indent_length}s")
+    wrap_tolerance=6
+    wrap_first=$((COLUMNS - 1))
+    wrap_other=$((wrap_first - indent_length - wrap_tolerance))
     ~/Code/Poetic-Poems/helper-scripts/check-nodes.sh 1> >(
       sed -uE                                               \
-        -es"/(.{$((COLUMNS - 1))})/\\1\\n/g"                \
+        -es"/(^.{$wrap_first}|.{$wrap_other})/\\1\\n/g"     \
+        -es"/ ([^ ]{1,$wrap_tolerance})\\n/\\n\\1/g"        \
+        -es"/\\n/\\n$indent/g"                              \
         -es"/^(node-name:\\s*)(.*\\S)/\\1$CYN\\2$off/"      \
         -es"/\<(ENABLED|ok)\>/$grn&$off/"                   \
         -es"/\<RUNNING\>/$red&$off/"                        \
