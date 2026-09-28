@@ -4,7 +4,7 @@
 #
 # This box wedges when the disk fills (the pagefile and the working set starve
 # each other), so sweeping stale scratch matters. What follows is the same
-# sweep, with the four ways the previous version could take live work:
+# sweep, with the five ways the previous version could take live work:
 #
 #   1. `find /tmp -maxdepth 1 -mmin +N -exec rm -rf {}` includes find's own
 #      starting point, so a /tmp whose own mtime had aged past N meant
@@ -19,6 +19,16 @@
 #      a branch back to main mid-task.
 #   4. `git branch -D` force-deleted *every* non-current branch, including ones
 #      whose commits existed nowhere else.
+#   5. `docker system prune -f` cannot tell a container stopped on purpose from
+#      an exited one-off. On 2026-09-11 the routine sweep deleted all eight
+#      agent-ops containers and their networks while the nodes were
+#      deliberately down, and on 2026-09-28 it removed the containers a
+#      half-finished compose apply had left stopped on `ockham-container`.
+#      Compose recreates them, but from today's `.env` rather than the
+#      configuration they were running with, and a janitor has no business
+#      changing that. Every prune command honours `label!=`, and compose
+#      labels everything it creates with its project name, so everything
+#      compose manages is excluded.
 #
 # Nothing here is deleted unless it is both stale throughout and recoverable.
 # Run with -n first if you want to see what it would do.
@@ -160,10 +170,10 @@ tidy_repo() {  # tidy_repo <repo>
 (( DRY )) && say "DRY RUN — nothing will be deleted"
 
 if (( DRY )); then
-  say "== docker: would run 'docker system prune -f' (no --volumes)"
+  say "== docker: would run 'docker system prune -f --filter label!=com.docker.compose.project' (never --volumes)"
 else
   say "== docker"
-  docker system prune -f
+  docker system prune -f --filter 'label!=com.docker.compose.project'
 fi
 
 sweep_dir /tmp
