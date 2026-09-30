@@ -99,21 +99,45 @@ holds_unpushed_work() {
   return 1
 }
 
+# A shell, tmux or editor history/config file anywhere inside (bounded, as
+# holds_unpushed_work above is): a containerised or SSH session commonly runs
+# with HOME pointed at a per-session directory under a swept root, not at the
+# root itself, so a plain top-level name match never sees the dotfile — the
+# whole directory still looks cold once the session ends, however live
+# $HISTFILE was throughout it.
+#
+# Files only, never directories: `.vim` and `.tmux` are usually directories
+# that accumulate their own stale content (swap/undo files, resurrect
+# snapshots) without bound, so they age and sweep normally like anything
+# else, rather than getting a blanket, permanent exemption because of their
+# name. Matching a file by name is lower-stakes if something unrelated
+# happens to share it — the exemption then costs one small file, not a whole
+# subtree.
+#
+# Necessarily incomplete: a custom $HISTFILE can be named anything, and not
+# every shell or tool is enumerated. `*_history` catches the common
+# convention (bash, zsh, python, node's REPL, psql, mysql, redis-cli, fish);
+# the rest are each tool's actual default name.
+holds_protected_files() {
+  local f
+  while IFS= read -r -d '' f; do
+    case "$(basename "$f")" in
+      *_history|.lesshst|.viminfo)                              return 0 ;;
+      .bashrc|.bash_profile|.bash_login|.bash_aliases|.profile) return 0 ;;
+      .zshrc|.zprofile|.zshenv|.vimrc|.tmux.conf|.inputrc)      return 0 ;;
+      .gitconfig|.editorconfig)                                 return 0 ;;
+    esac
+  done < <(find "$1" -maxdepth 4 -type f -print0 2>/dev/null)
+  return 1
+}
+
 # Sockets and the X/ICE rendezvous directories are ancient by design and in use
 # regardless; deleting one breaks a running program rather than freeing space.
-#
-# Shell, tmux and editor history/config files are protected by name wherever
-# they turn up as a top-level entry of a swept root: an ephemeral session
-# (a container, an SSH session) sometimes runs with HOME pointed at /tmp, and
-# a history or config file is exactly the kind of thing that looks cold —
-# unmodified for hours between sessions — while still being load-bearing.
 is_protected() {
   case "$(basename "$1")" in
     .X11-unix|.ICE-unix|.font-unix|.XIM-unix|.Test-unix) return 0 ;;
     systemd-*|snap*|tailscaled*|docker*|containerd*)     return 0 ;;
     tmux-1000)                                           return 0 ;;
-    .bash_history|.zsh_history|.sh_history|.python_history|.node_repl_history|.lesshst|.viminfo|.psql_history|.mysql_history|.rediscli_history) return 0 ;;
-    .bashrc|.bash_profile|.bash_login|.bash_aliases|.profile|.zshrc|.zprofile|.zshenv|.vimrc|.vim|.tmux.conf|.tmux|.inputrc|.gitconfig|.editorconfig) return 0 ;;
   esac
   [[ -S "$1" ]]
 }
@@ -124,10 +148,11 @@ sweep_dir() {  # sweep_dir <root>
   say "== $root (older than ${AGE_HOURS}h, throughout)"
   # -mindepth 1: never the root itself. That is hazard 1.
   while IFS= read -r -d '' p; do
-    if is_protected "$p";        then keep "$p" "protected name or socket";      continue; fi
-    if [[ ! -O "$p" ]];          then keep "$p" "not owned by ${USER}";          continue; fi
-    if has_recent "$p";          then keep "$p" "modified within ${AGE_HOURS}h"; continue; fi
-    if holds_unpushed_work "$p"; then keep "$p" "holds uncommitted or unpushed git work"; continue; fi
+    if is_protected "$p";          then keep "$p" "protected name or socket";      continue; fi
+    if [[ ! -O "$p" ]];            then keep "$p" "not owned by ${USER}";          continue; fi
+    if has_recent "$p";            then keep "$p" "modified within ${AGE_HOURS}h"; continue; fi
+    if holds_unpushed_work "$p";   then keep "$p" "holds uncommitted or unpushed git work"; continue; fi
+    if holds_protected_files "$p"; then keep "$p" "holds a history or config file"; continue; fi
     sweep "$p" "cold throughout"
   done < <(find "$root" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
 }
