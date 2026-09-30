@@ -101,11 +101,19 @@ holds_unpushed_work() {
 
 # Sockets and the X/ICE rendezvous directories are ancient by design and in use
 # regardless; deleting one breaks a running program rather than freeing space.
+#
+# Shell, tmux and editor history/config files are protected by name wherever
+# they turn up as a top-level entry of a swept root: an ephemeral session
+# (a container, an SSH session) sometimes runs with HOME pointed at /tmp, and
+# a history or config file is exactly the kind of thing that looks cold —
+# unmodified for hours between sessions — while still being load-bearing.
 is_protected() {
   case "$(basename "$1")" in
     .X11-unix|.ICE-unix|.font-unix|.XIM-unix|.Test-unix) return 0 ;;
     systemd-*|snap*|tailscaled*|docker*|containerd*)     return 0 ;;
     tmux-1000)                                           return 0 ;;
+    .bash_history|.zsh_history|.sh_history|.python_history|.node_repl_history|.lesshst|.viminfo|.psql_history|.mysql_history|.rediscli_history) return 0 ;;
+    .bashrc|.bash_profile|.bash_login|.bash_aliases|.profile|.zshrc|.zprofile|.zshenv|.vimrc|.vim|.tmux.conf|.tmux|.inputrc|.gitconfig|.editorconfig) return 0 ;;
   esac
   [[ -S "$1" ]]
 }
