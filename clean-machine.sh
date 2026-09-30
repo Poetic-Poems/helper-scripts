@@ -65,9 +65,82 @@ find "$directory"                               \
   -mtime +$LOG_RETENTION_DAYS                   \
   -exec $dry_guard rm -v {} +
 
+# Names find will not delete when trimming (below): the common shell, tmux
+# and editor history/config files, matched by find's own `-name`, not a
+# forked `basename` per candidate, so a file-heavy tree costs one process
+# rather than thousands.
+#
+# Necessarily incomplete: a custom $HISTFILE can be named anything, and not
+# every shell or tool is enumerated. `*_history` catches the common
+# convention (bash, zsh, python, node's REPL, psql, mysql, redis-cli, fish);
+# the rest are each tool's actual default name.
+PROTECTED_FILE_NAMES=(
+  -name '*_history'    -o -name '.lesshst'      -o -name '.viminfo'
+  -o -name '.bashrc'   -o -name '.bash_profile' -o -name '.bash_login'
+  -o -name '.bash_aliases' -o -name '.profile'
+  -o -name '.zshrc'    -o -name '.zprofile'     -o -name '.zshenv'
+  -o -name '.vimrc'    -o -name '.tmux.conf'    -o -name '.inputrc'
+  -o -name '.gitconfig' -o -name '.editorconfig'
+)
+# Bounded the same as holds_unpushed_work, and for the same reason: this only
+# gates how far sweep() looks before giving up and removing the entry
+# outright, not how far protection reaches, so a miss costs no more than this
+# PR's starting point did.
+PROTECTED_FILE_DEPTH=4
+
+# Where, below "$1", the first protected name (file or symlink — a
+# stow/chezmoi/home-manager HOME manages its dotfiles as symlinks) turns up,
+# or nothing if none does. `-quit` stops at the first hit, so this costs
+# almost nothing unless the tree really has none.
+protected_file_in() {
+  find "$1" -maxdepth "$PROTECTED_FILE_DEPTH" \( -type f -o -type l \) \
+    \( "${PROTECTED_FILE_NAMES[@]}" \) -print -quit 2>/dev/null
+}
+
+# Delete, or say what would have been deleted, leaving a protected file (and
+# the directories on the path to it) in place rather than exempting the
+# whole entry: a clone can carry a `.editorconfig` or `.gitconfig` as
+# ordinary checked-in content anywhere in its tree, and a stale scratch
+# directory occasionally holds a real `.bash_history`. Matching a file by
+# name and keeping only that file, wherever it turns up, means the mistake
+# — or a session whose $HOME this really was, long since ended — costs one
+# small file for as long as it sits there, never the tree around it.
+#
+# A protected symlink (a stow/chezmoi/home-manager HOME) is kept alongside
+# whatever it resolves to, if that target also lies inside "$p": keeping the
+# link but deleting its target as ordinary content would leave a dangling
+# symlink, which is worse than not recognising it at all.
+trim() {
+  local p="$1" hit="$2" f resolved keep=$'\n'
+  while IFS= read -r -d '' f; do
+    keep+="$f"$'\n'
+    if [[ -L "$f" ]]; then
+      resolved="$(readlink -f -- "$f" 2>/dev/null)"
+      [[ -n "$resolved" && "$resolved" == "$p"/* ]] && keep+="$resolved"$'\n'
+    fi
+  done < <(find "$p" \( -type f -o -type l \) \( "${PROTECTED_FILE_NAMES[@]}" \) -print0 2>/dev/null)
+
+  if (( DRY )); then
+    say "would trim    $p  (keeping $hit, removing the rest)"
+    swept=$(( swept + 1 )); return
+  fi
+  say "trimming      $p  (keeping $hit, removing the rest)"
+  while IFS= read -r -d '' f; do
+    [[ "$keep" == *$'\n'"$f"$'\n'* ]] && continue
+    rm -f -- "$f"
+  done < <(find "$p" \( -type f -o -type l \) -print0 2>/dev/null)
+  find "$p" -depth -type d ! -path "$p" -empty -delete 2>/dev/null
+  swept=$(( swept + 1 ))
+}
+
 # Delete, or say what would have been deleted. Never called on a root.
 sweep() {
-  local p="$1" why="$2"
+  local p="$1" why="$2" hit
+  hit="$(protected_file_in "$p")"
+  if [[ -n "$hit" ]]; then
+    trim "$p" "$hit"
+    return
+  fi
   if (( DRY )); then
     say "would remove  $p  ($why)"
   else
@@ -99,38 +172,6 @@ holds_unpushed_work() {
   return 1
 }
 
-# A shell, tmux or editor history/config file anywhere inside (bounded, as
-# holds_unpushed_work above is): a containerised or SSH session commonly runs
-# with HOME pointed at a per-session directory under a swept root, not at the
-# root itself, so a plain top-level name match never sees the dotfile — the
-# whole directory still looks cold once the session ends, however live
-# $HISTFILE was throughout it.
-#
-# Files only, never directories: `.vim` and `.tmux` are usually directories
-# that accumulate their own stale content (swap/undo files, resurrect
-# snapshots) without bound, so they age and sweep normally like anything
-# else, rather than getting a blanket, permanent exemption because of their
-# name. Matching a file by name is lower-stakes if something unrelated
-# happens to share it — the exemption then costs one small file, not a whole
-# subtree.
-#
-# Necessarily incomplete: a custom $HISTFILE can be named anything, and not
-# every shell or tool is enumerated. `*_history` catches the common
-# convention (bash, zsh, python, node's REPL, psql, mysql, redis-cli, fish);
-# the rest are each tool's actual default name.
-holds_protected_files() {
-  local f
-  while IFS= read -r -d '' f; do
-    case "$(basename "$f")" in
-      *_history|.lesshst|.viminfo)                              return 0 ;;
-      .bashrc|.bash_profile|.bash_login|.bash_aliases|.profile) return 0 ;;
-      .zshrc|.zprofile|.zshenv|.vimrc|.tmux.conf|.inputrc)      return 0 ;;
-      .gitconfig|.editorconfig)                                 return 0 ;;
-    esac
-  done < <(find "$1" -maxdepth 4 -type f -print0 2>/dev/null)
-  return 1
-}
-
 # Sockets and the X/ICE rendezvous directories are ancient by design and in use
 # regardless; deleting one breaks a running program rather than freeing space.
 is_protected() {
@@ -148,11 +189,10 @@ sweep_dir() {  # sweep_dir <root>
   say "== $root (older than ${AGE_HOURS}h, throughout)"
   # -mindepth 1: never the root itself. That is hazard 1.
   while IFS= read -r -d '' p; do
-    if is_protected "$p";          then keep "$p" "protected name or socket";      continue; fi
-    if [[ ! -O "$p" ]];            then keep "$p" "not owned by ${USER}";          continue; fi
-    if has_recent "$p";            then keep "$p" "modified within ${AGE_HOURS}h"; continue; fi
-    if holds_unpushed_work "$p";   then keep "$p" "holds uncommitted or unpushed git work"; continue; fi
-    if holds_protected_files "$p"; then keep "$p" "holds a history or config file"; continue; fi
+    if is_protected "$p";        then keep "$p" "protected name or socket";      continue; fi
+    if [[ ! -O "$p" ]];          then keep "$p" "not owned by ${USER}";          continue; fi
+    if has_recent "$p";          then keep "$p" "modified within ${AGE_HOURS}h"; continue; fi
+    if holds_unpushed_work "$p"; then keep "$p" "holds uncommitted or unpushed git work"; continue; fi
     sweep "$p" "cold throughout"
   done < <(find "$root" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
 }
