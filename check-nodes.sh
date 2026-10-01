@@ -67,15 +67,23 @@ fi
 # always one of those no-ops, and keying on it reported `idle` for a node an
 # hour into an implementer stage (2026-09-15). A cycle's id ends in the pid
 # that lock.json records, which is how the two are matched here.
+#
+# The log is read in one streaming pass, holding only the latest matching
+# cycle-start and its selection. log.jsonl is never rotated, and a `jq -s`
+# slurp of it peaked at 109 MB on node 1's 22 MB log on 2026-10-01, inside
+# the very cgroup whose memory.high this script is checking. Reading each line
+# with `fromjson?` also skips a malformed line rather than aborting the read.
 state=/home/agent/.local/state/poetic-agents
 pid="$(dx jq -r '.pid // empty' "$state/lock.json" 2>/dev/null </dev/null)"
 if [ -n "$pid" ] && dx test -d "/proc/$pid" </dev/null 2>/dev/null; then
-  item="$(dx jq -sr --arg pid "$pid" '
-      ([.[] | select(.event=="cycle-start") | select(.cycle | tostring | endswith("-" + $pid))] | last) as $s
-      | if $s == null then "selecting" else
-          ([.[] | select(.cycle == $s.cycle and .event=="selection")] | last) as $sel
-          | if $sel == null then "selecting" else "\($sel.repo) \($sel.item)" end
-        end
+  item="$(dx jq -nRr --arg pid "$pid" '
+      reduce (inputs | fromjson? // empty) as $e ({};
+        if $e.event == "cycle-start" and ($e.cycle | tostring | endswith("-" + $pid)) then
+          {s: $e.cycle}
+        elif $e.event == "selection" and .s != null and $e.cycle == .s then
+          .sel = $e
+        else . end)
+      | if .sel == null then "selecting" else "\(.sel.repo) \(.sel.item)" end
     ' "$state/log.jsonl" 2>/dev/null </dev/null)"
 else
   item=idle
