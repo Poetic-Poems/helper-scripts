@@ -72,15 +72,11 @@ find "$directory"                               \
 #
 # Necessarily incomplete: a custom $HISTFILE can be named anything, and not
 # every shell or tool is enumerated. `*_history` catches the common
-# convention (bash, zsh, python, node's REPL, psql, mysql, redis-cli, fish);
-# the rest are each tool's actual default name.
+# convention (bash, zsh, python, node's REPL, psql, mysql, redis-cli, fish).
 PROTECTED_FILE_NAMES=(
-  -name '*_history'    -o -name '.lesshst'      -o -name '.viminfo'
-  -o -name '.bashrc'   -o -name '.bash_profile' -o -name '.bash_login'
-  -o -name '.bash_aliases' -o -name '.profile'
-  -o -name '.zshrc'    -o -name '.zprofile'     -o -name '.zshenv'
-  -o -name '.vimrc'    -o -name '.tmux.conf'    -o -name '.inputrc'
-  -o -name '.gitconfig' -o -name '.editorconfig'
+  -regex '.*\..*\(conf\(ig\)?\|env\|profile\|rc\)'
+  -o -name '*_history'    -o -name '.lesshst'     -o -name '.viminfo'
+  -o -name '.bash_login'  -o -name '.bash_aliases'
 )
 # Bounded the same as holds_unpushed_work, and for the same reason: this only
 # gates how far sweep() looks before giving up and removing the entry
