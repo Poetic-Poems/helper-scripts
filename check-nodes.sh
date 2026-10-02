@@ -43,7 +43,8 @@ disp() { printf '%-'$indent's%s\n' "$1:" "${*:2}"; }
 dx() { timeout 30 docker compose exec -T scheduler "$@"; }
 echo -e "\n---\n"
 cd "$D"
-disp host      "$(printf '%-16s(%s)' "$(hostname)" "$(uptime)")"
+disp host      "$(hostname)"
+disp uptime    "$(uptime)"
 disp node-dir  "$D"
 disp node-name "$(awk -F= '/^NODE_NAME=/{print $2}' .env)"
 dx /app/agent-cycle.sh --status </dev/null
