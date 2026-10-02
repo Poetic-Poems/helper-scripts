@@ -120,8 +120,8 @@ BEGIN {
     $then = `date -d"$1" +%s`;
     $diff = $then - $now;
     $sign = $diff =~ s/^-// ? "a" : "to ";
-    @units       = qw/ w  d  h  m  s /;
-    @multipliers = qw/    7 24 60 60 /;
+    @units       = qw/ y  w  d  h  m  s /;
+    @multipliers = qw/   52  7 24 60 60 /;
     while (@multipliers) {
       $multiplier = pop @multipliers;
       $diff > 1.65*$multiplier or last;
