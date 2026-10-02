@@ -18,7 +18,8 @@ date +'%n%Y-%m-%dT%H:%M:%S%z'
 extract() { awk 'p&&/^###/{exit} /^## '$1' /{p=1;next} p{print}' "$0"; }
 cmd=$(extract COMMANDS)
 fmt=$(extract FORMAT)
-format() { perl -pe "$fmt"; }
+indent=16
+format() { perl -pe "$fmt" $indent; }
 
 # local nodes
 for d in ~/poetic-node-{1,2}; do
@@ -38,12 +39,12 @@ exit
 
 #!/bin/bash
 
-disp() { printf '%-16s%s\n' "$1:" "$2"; }
+disp() { printf '%-'$indent's%s\n' "$1:" "${*:2}"; }
 dx() { timeout 30 docker compose exec -T scheduler "$@"; }
 echo -e "\n---\n"
 cd "$D"
-disp host "$(hostname)"
-disp node-dir "$D"
+disp host      "$(printf '%-16s(%s)' "$(hostname)" "$(uptime)")"
+disp node-dir  "$D"
 disp node-name "$(awk -F= '/^NODE_NAME=/{print $2}' .env)"
 dx /app/agent-cycle.sh --status </dev/null
 if [ $? -eq 124 ]; then
@@ -52,11 +53,15 @@ if [ $? -eq 124 ]; then
   ev="$(awk -F= '/^AGENT_OPS_SCHEDULER_CGROUP_EVENTS=/{print $2}' .env)"
   if [ -r "$ev" ]; then
     c="${ev%/memory.events}"
-    disp cgroup "$c: current $(( $(cat "$c/memory.current") / 1048576 ))MiB, high $(cat "$c/memory.high"), max $(cat "$c/memory.max")"
+    disp cgroup "$c: current $(( $(cat "$c/memory.current") / 1048576 ))MiB," \
+                "high $(cat "$c/memory.high"), max $(cat "$c/memory.max")"
     disp events "$(tr '\n' ' ' < "$ev")"
-    disp see "a high count in the millions with current above high is the memory.high livelock: operations/scheduler-memory-high-parent-cgroup.md"
+    disp see    "a high count in the millions with current above high is the" \
+                "memory.high livelock:"                                       \
+                "operations/scheduler-memory-high-parent-cgroup.md"
   else
-    disp cgroup "no readable AGENT_OPS_SCHEDULER_CGROUP_EVENTS in .env (unparented); read the load and D count above"
+    disp cgroup "no readable AGENT_OPS_SCHEDULER_CGROUP_EVENTS in .env"       \
+                "(unparented); read the load and D count above"
   fi
   exit 0
 fi
@@ -107,6 +112,7 @@ disp image "${pr:-none}$short"
 #!/usr/bin/perl -p
 
 BEGIN {
+  $indent = shift @ARGV;
   $now = `date +%s`;
   sub ago {
     $timestamp = $1;
@@ -126,5 +132,5 @@ BEGIN {
 }
 s/((?:\d\d[-T:Z]?){7})/ago/ge;
 s/ (\d+)([wdhms] (?:a|to )go)\b/sprintf '% 3d%s', $1, $2/eg;
-s/^(\S*?:\s*)(?=\S)/$1." "x(16-length$1)/e;
+s/^(\S*?:\s*)(?=\S)/$1." "x($indent-length$1)/e;
 s/^(  \S+)( \S+)/sprintf '%-35s%-5s',$1,$2/e;
