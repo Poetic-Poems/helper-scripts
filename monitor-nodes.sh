@@ -46,8 +46,8 @@ CMD='(
         -es"/.*/$YLW&$off/"                                 \
     )
   )'
-PERIOD=300
-PHASE=240
+PERIOD=${MONITOR_NODES_PERIOD:-300}
+PHASE=${MONITOR_NODES_PHASE:-240}
 
 # --- Sanity checks ----------------------------------------------------------
 
