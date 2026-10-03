@@ -45,6 +45,7 @@ echo -e "\n---\n"
 cd "$D"
 disp host      "$(hostname)"
 disp uptime    "$(uptime)"
+disp memory    "$(free -hw | awk '/^Mem:/{print "used: " $3 ",  available: " $8}')"
 disp node-dir  "$D"
 disp node-name "$(awk -F= '/^NODE_NAME=/{print $2}' .env)"
 dx /app/agent-cycle.sh --status </dev/null
