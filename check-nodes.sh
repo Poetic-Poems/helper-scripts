@@ -132,6 +132,8 @@ BEGIN {
     sprintf('%s (%.0f%s %sgo)', $timestamp, $diff, $units[-1], $sign)
   }
 }
+/^((\w|-)+(:|$)|  \w|$)/ or $_ = (' 'x$indent).$_;
+s/^ {8,}/' 'x$indent/e;
 s/((?:\d\d[-T:Z]?){7})/ago/ge;
 s/ (\d+)([wdhms] (?:a|to )go)\b/sprintf '% 3d%s', $1, $2/eg;
 s/^(\S*?:\s*)(?=\S)/$1." "x($indent-length$1)/e;
