@@ -12,7 +12,7 @@
 # cgroup's memory counters from the host instead — the reading that names
 # that condition — and skips the execs that would follow.
 
-printf '\n%72s\n' | tr \  =
+printf '\n%80s\n' | tr \  =
 date +'%n%Y-%m-%dT%H:%M:%S%z'
 
 extract() { awk 'p&&/^###/{exit} /^## '$1' /{p=1;next} p{print}' "$0"; }
@@ -60,7 +60,7 @@ echo -e "\n---\n"
 cd "$D"
 nodename="$(awk -F= '/^NODE_NAME=/{print $2}' .env)"
 disp host      "$(hostname)"
-disp uptime    "$(uptime)"
+disp uptime    "$(uptime | sed -E 's/^ ([0-9])/0\1/')"
 disp memory    "$(free -hw | awk '/^Mem:/{print "used: " $3 ",  available: " $8}')"
 disp node-dir  "$D"
 disp node-name "$nodename"
@@ -153,4 +153,4 @@ s/^ {8,}/' 'x$indent/e;
 s/((?:\d\d[-T:Z]?){7})(?![+-]\d{4})/ago/ge;
 s/ (\d+)([wdhms] (?:a|to )go)\b/sprintf '% 3d%s', $1, $2/eg;
 s/^(\S*?:\s*)(?=\S)/$1." "x($indent-length$1)/e;
-s/^(  \S+)( \S+)/sprintf '%-35s%-5s',$1,$2/e;
+s/^(  \S+)( \S+)/sprintf '%-36s%-5s',"$1:",$2/e;
