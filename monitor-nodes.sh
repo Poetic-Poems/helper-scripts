@@ -7,21 +7,46 @@
 #
 # This script must be run from a shell that is already inside a tmux
 # session (i.e. $TMUX must be set); it operates on that session.
+#
+# OPTIONS
+#   -c, --colour              Use colour output (default)
+#   -C, --no-colour           Don't use colour output.
 
 set -euo pipefail
+
+eval set -- "$(getopt -lcolor,colour,no-color,no-colour -ocC -- "$@")"
+c=true
+while true; do
+  case "$1" in
+    -c|--color|--colour)
+      c=true
+      ;;
+    -C|--no-color|--no-colour)
+      c=false
+      ;;
+    --)
+      shift
+      break
+      ;;
+  esac
+  shift
+done
 
 # --- Configuration ---------------------------------------------------------
 
 WINDOW_NAME="monitor-nodes"                   # Name of the new tmux window.
 PIPE="/tmp/monitor-nodes.$$.pipe"             # Path of the named pipe.
 
-CMD='(
+CMD='red= grn= blu= YLW= PRP= CYN= off= '
+$c && CMD='
     red=$'\''\033[1;31m'\''
     grn=$'\''\033[1;32m'\''
     blu=$'\''\033[1;34m'\''
     YLW=$'\''\033[1;93m'\''
+    PRP=$'\''\033[1;95m'\''
     CYN=$'\''\033[1;96m'\''
-    off=$'\''\e[m'\''
+    off=$'\''\e[m'\'
+CMD+='
     indent_length=16
     indent=$(printf "%${indent_length}s")
     wrap_tolerance=6
@@ -40,12 +65,13 @@ CMD='(
         -es"/\<(ENABLED|ok)\>/$grn&$off/"                   \
         -es"/\<RUNNING\>/$red&$off/"                        \
         -es"/\<idle\>/$blu&$off/"                           \
+        -es"/^(item: *)(.*\\S)/\\1$PRP\\2$off/"             \
     ) 2> >(
       sed -uE                                               \
         -es"/(.{$((COLUMNS - 1))})/\\1\\n/g"                \
         -es"/.*/$YLW&$off/"                                 \
     )
-  )'
+'
 PERIOD=${MONITOR_NODES_PERIOD:-300}
 PHASE=${MONITOR_NODES_PHASE:-240}
 
@@ -79,7 +105,7 @@ right_pane=$(tmux split-window -h -t "$left_pane" -P -F '#{pane_id}')
 rows='$(($(tmux display-message -p "#{pane_height}") - 1))'
 tmux send-keys -t "$right_pane" "
 while true; do
-  $CMD
+  ($CMD)
   sleep \$(($PERIOD - (\$(date +%s) - $PHASE)%$PERIOD))
 done |
 tee >(
