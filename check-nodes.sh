@@ -22,7 +22,6 @@ indent=16
 format() { perl -pe "$fmt" $indent; }
 
 # local nodes
-export indent
 for d in ~/poetic-node-{1,2}; do
   D="$d" bash -s <<<"$cmd" | format
 done
@@ -40,30 +39,15 @@ exit
 
 #!/bin/bash
 
-logname_dir=/tmp
-logname_head=check-nodes-
-find "$logname_dir" -maxdepth 0 -type f -name "$logname_head*" -mtime +1 -delete
-disp() {
-  _disp() { printf '%-'$indent's%s\n' "$1:" "${*:2}"; }
-  if [ -z "$logname" ] || [ "$1" == "host" ]; then
-    export logname="$logname_dir/$logname_head${EPOCHREALTIME/./}-$2:$nodename.log"
-  fi
-  if [ ! -e "$logname" ]; then
-    _disp time $(date -u +'%Y-%m-%dT%H:%M:%S%z') >"$logname"
-  fi
-  _disp "$@" | tee -a "$logname"
-}
-dx() {
-  timeout 30 docker compose exec -T scheduler "$@" | tee -a "$logname"
-}
+disp() { printf '%-'$indent's%s\n' "$1:" "${*:2}"; }
+dx() { timeout 30 docker compose exec -T scheduler "$@"; }
 echo -e "\n---\n"
 cd "$D"
-nodename="$(awk -F= '/^NODE_NAME=/{print $2}' .env)"
 disp host      "$(hostname)"
 disp uptime    "$(uptime | sed -E 's/^ ([0-9])/0\1/')"
 disp memory    "$(free -hw | awk '/^Mem:/{print "used: " $3 ",  available: " $8}')"
 disp node-dir  "$D"
-disp node-name "$nodename"
+disp node-name "$(awk -F= '/^NODE_NAME=/{print $2}' .env)"
 dx /app/agent-cycle.sh --status </dev/null
 if [ $? -eq 124 ]; then
   disp status "docker exec hung for 30s"
@@ -150,7 +134,7 @@ BEGIN {
 }
 /^((\w|-)+(:|$)|  \w|$)/ or $_ = (' 'x$indent).$_;
 s/^ {8,}/' 'x$indent/e;
-s/((?:\d\d[-T:Z]?){7})(?![+-]\d{4})/ago/ge;
+s/((?:\d\d[-T:Z]?){7})/ago/ge;
 s/ (\d+)([wdhms] (?:a|to )go)\b/sprintf '% 3d%s', $1, $2/eg;
 s/^(\S*?:\s*)(?=\S)/$1." "x($indent-length$1)/e;
 s/^(  \S+)( \S+)/sprintf '%-36s%-5s',"$1:",$2/e;
